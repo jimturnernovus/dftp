@@ -89,6 +89,12 @@ export function startLayer(opts) {
   const pieces = new WeakMap();     // el -> Map(text index -> {tn, spans})
   const textSaved = new WeakMap();  // el -> [[text node, original value], ...]
   const phSaved = new WeakMap();    // el -> {value: original placeholder or null}
+  // What the layer itself wrote, so the page's own text can always be told
+  // apart from a drawn text edit: text node -> {orig, value}; text box ->
+  // drawn placeholder. Recognising elements by the page's own text keeps a
+  // drawn edit from making its element (or an ancestor) look like a stranger.
+  const drawnNodes = new WeakMap();
+  const drawnPh = new WeakMap();
   const clipSaved = new WeakMap();  // el -> [overflow value, priority]
   const wrapSaved = new WeakMap();  // el -> {holder, value, prio}: white-space set so line breaks show
   let unclipped = [];
@@ -414,7 +420,22 @@ export function startLayer(opts) {
   // front of it. The original node is kept (with an empty value) because a
   // framework may still hold a reference to it and write into it later; when
   // that happens the spans are rebuilt from the new text.
+  // True when a text edit holds this text: on the element or an ancestor
+  // (drawn already, or recorded and about to be drawn). Its text nodes are the
+  // edit's to write, so they are never broken into words: splitting them made
+  // the text show twice and redraw without end.
+  function textHeld(el) {
+    const recorded = new Set();
+    for (const ch of S.changes.values()) if (hasText(ch) && !ch.key.includes(">~")) recorded.add(ch.key);
+    for (let a = el; a && a.nodeType === 1; a = a.parentElement) {
+      if (textSaved.has(a)) return true;
+      if (recorded.size && !pieceOf(a) && recorded.has(appliedKey.get(a) || keyOf(a))) return true;
+    }
+    return false;
+  }
+
   function splitText(parent, ti) {
+    if (textHeld(parent)) return null;
     let byIndex = pieces.get(parent);
     if (!byIndex) {
       byIndex = new Map();
@@ -485,6 +506,7 @@ export function startLayer(opts) {
     if (!parent) return null;
     if (pieceOf(parent)) return parent;
     if (!isPage(parent) || isPrivate(parent) || parent.closest(NO_TEXT_SEL)) return null;
+    if (textHeld(parent)) return "held";
     const ti = directTexts(parent).indexOf(tn);
     const spans = splitText(parent, ti);
     if (!spans) return null;
@@ -518,19 +540,34 @@ export function startLayer(opts) {
 
   // A short label for an element: its own visible words, else its accessible
   // name, placeholder, title or alt text. Never a form value, never private text.
-  function textOf(el) {
+  // A text node's value as the page wrote it (a value the layer drew reads
+  // as the original it replaced).
+  const nodeText = (n) => {
+    const d = drawnNodes.get(n);
+    return d && n.nodeValue === d.value ? d.orig : n.nodeValue;
+  };
+  const placeholderOf = (el) => {
+    const v = el.getAttribute("placeholder");
+    return drawnPh.has(el) && v === drawnPh.get(el) && phSaved.has(el) ? phSaved.get(el).value || "" : v || "";
+  };
+
+  // The element's label: its words, else its accessible name, placeholder,
+  // title or alt. With `page`, the page's own words: anything the layer drew
+  // (a text edit on it or on a word inside it) reads as what it replaced.
+  function textOf(el, { page = false } = {}) {
     if (!captureText || !el || el.nodeType !== 1 || isPrivate(el)) return "";
     let out = "";
     const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     for (let n = w.nextNode(); n && out.length < 400; n = w.nextNode()) {
       const p = n.parentElement;
       if (!p || p.closest(NO_TEXT_SEL)) continue;
-      out += ` ${n.nodeValue}`;
+      out += ` ${page ? nodeText(n) : n.nodeValue}`;
     }
     let t = norm(out);
-    if (!t) t = norm(el.getAttribute("aria-label") || el.getAttribute("placeholder") || el.getAttribute("title") || el.getAttribute("alt") || "");
+    if (!t) t = norm(el.getAttribute("aria-label") || (page ? placeholderOf(el) : el.getAttribute("placeholder")) || el.getAttribute("title") || el.getAttribute("alt") || "");
     return t.slice(0, 80);
   }
+  const pageTextOf = (el) => textOf(el, { page: true });
 
   function describe(el) {
     const key = keyOf(el);
@@ -717,8 +754,11 @@ export function startLayer(opts) {
     // Lift a moved element over its siblings so the drop position is visible.
     set("position", moved && st.wasStatic ? "relative" : null);
     set("z-index", moved ? "40" : null);
-    if (moved || hasW || hasH || c.hidden || (c.text_to !== undefined && c.text_to !== null)) el.setAttribute(MARK, "1");
-    else el.removeAttribute(MARK);
+    // Written only when it changes, so a redraw does not disturb the page
+    // (an attribute write is a DOM mutation even with the same value).
+    if (moved || hasW || hasH || c.hidden || (c.text_to !== undefined && c.text_to !== null)) {
+      if (el.getAttribute(MARK) !== "1") el.setAttribute(MARK, "1");
+    } else if (el.hasAttribute(MARK)) el.removeAttribute(MARK);
   }
 
   const isBox = (el) => el.localName === "textarea" || (el.localName === "input" && TEXT_INPUT_TYPES.has(String(el.getAttribute("type") || "").toLowerCase()));
@@ -759,11 +799,13 @@ export function startLayer(opts) {
       if (has) {
         if (!phSaved.has(el)) phSaved.set(el, { value: el.getAttribute("placeholder") });
         if (el.getAttribute("placeholder") !== c.text_to) el.setAttribute("placeholder", c.text_to);
+        drawnPh.set(el, c.text_to);
       } else if (phSaved.has(el)) {
         const { value } = phSaved.get(el);
         if (value === null) el.removeAttribute("placeholder");
         else el.setAttribute("placeholder", value);
         phSaved.delete(el);
+        drawnPh.delete(el);
       }
       return;
     }
@@ -777,13 +819,25 @@ export function startLayer(opts) {
         }
         textSaved.set(el, list);
       }
-      textSaved.get(el).forEach(([n], i) => {
-        const v = i === 0 ? c.text_to : "";
+      // A word piece carries the space that followed the word in the text;
+      // keep it after the new words, or the next word would run into them.
+      const saved = textSaved.get(el);
+      let tail = pieceOf(el) && !/\s$/.test(c.text_to) ? (saved.map(([, v]) => v).join("").match(/\s+$/) || [""])[0] : "";
+      // Typed line breaks show through white-space: pre-line, which would also
+      // show a line break in that space; where the page collapses white space
+      // anyway, a single space is what it drew.
+      if (tail && c.text_to.includes("\n") && el.parentElement && /^(normal|nowrap)$/.test(getComputedStyle(el.parentElement).whiteSpace)) tail = " ";
+      saved.forEach(([n, orig], i) => {
+        const v = i === 0 ? c.text_to + tail : "";
         if (n.nodeValue !== v) n.nodeValue = v;
+        drawnNodes.set(n, { orig, value: v });
       });
       showBreaks(el, c.text_to.includes("\n"));
     } else if (textSaved.has(el)) {
-      for (const [n, v] of textSaved.get(el)) if (n.nodeValue !== v) n.nodeValue = v;
+      for (const [n, v] of textSaved.get(el)) {
+        if (n.nodeValue !== v) n.nodeValue = v;
+        drawnNodes.delete(n);
+      }
       textSaved.delete(el);
       showBreaks(el, false);
     }
@@ -925,7 +979,7 @@ export function startLayer(opts) {
 
   function textMatches(el, c) {
     if (!captureText) return true;
-    const cur = norm(textOf(el));
+    const cur = norm(pageTextOf(el));
     const want = [c.text, c.text_to].filter((t) => typeof t === "string" && t !== "").map((t) => norm(t).slice(0, 80));
     return !want.length || want.some((t) => cur === t || (t.length >= 12 && cur.startsWith(t.slice(0, 40))));
   }
@@ -954,12 +1008,17 @@ export function startLayer(opts) {
     const tilde = c.key.lastIndexOf(">~");
     if (tilde >= 0) {
       const w = norm(c.text);
-      if (exact && (!w || !captureText || norm(exact.textContent) === w)) return exact;
+      // A word piece is recognised by the word the page drew, not by what it
+      // shows now: once its own text edit is drawn it reads text_to, and
+      // comparing that to the recorded word made the change drop off and come
+      // back on every redraw (the word flickered between the two texts).
+      const wordOf = (sp) => norm(originalText(sp));
+      if (exact && (!w || !captureText || wordOf(exact) === w)) return exact;
       if (!w) return null;
       const ti = Number(c.key.slice(tilde + 2).split(".")[0]);
       const holds = (el) => {
         const have = pieces.get(el) && pieces.get(el).get(ti);
-        if (have) return have.spans.some((sp) => norm(sp.textContent) === w);
+        if (have) return have.spans.some((sp) => wordOf(sp) === w);
         const tn = directTexts(el)[ti];
         return !!tn && norm(tn.nodeValue).split(" ").includes(w);
       };
@@ -969,7 +1028,7 @@ export function startLayer(opts) {
       if (lib) cands = cands.filter((el) => fileOf(usedInOf(el)) === fileOf(c.used_in));
       const parent = lib ? byUse(cands) : nearest(cands, lineOf(anchorLoc));
       const spans = parent ? splitText(parent, ti) : null;
-      return (spans && spans.find((sp) => norm(sp.textContent) === w)) || null;
+      return (spans && spans.find((sp) => wordOf(sp) === w)) || null;
     }
     if (c.key.includes(">")) {
       // Child-path keys depend on their ancestor's stamp; a library anchor
@@ -1125,7 +1184,7 @@ export function startLayer(opts) {
       loc: d.loc,
       occ: d.occ,
       tag: tagOf(el),
-      text: textOf(el),
+      text: pageTextOf(el),
       dx: 0,
       dy: 0,
       w: null,
@@ -1451,7 +1510,8 @@ export function startLayer(opts) {
       swallow(e);
       if (type === "dblclick") {
         const piece = splitAt(e.clientX, e.clientY);
-        if (piece) select(piece);
+        if (piece === "held") toast("split-edited");
+        else if (piece) select(piece);
         else toast("split-failed");
       }
     }, { capture: true, passive: false });
@@ -1831,7 +1891,7 @@ export function startLayer(opts) {
     S.changes.delete(k);
     S.changes.delete(keyFor(el));
     if (!c.was_loc) c.was_loc = c.loc || "";
-    Object.assign(c, { key: k, loc: d.loc, occ: d.occ, tag: tagOf(el), text: textOf(el), hint: hintOf(el) });
+    Object.assign(c, { key: k, loc: d.loc, occ: d.occ, tag: tagOf(el), text: pageTextOf(el), hint: hintOf(el) });
     if (d.part && PATH_RE.test(d.path)) {
       c.part = true;
       c.path = d.path;

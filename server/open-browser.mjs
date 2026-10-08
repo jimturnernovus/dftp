@@ -3,7 +3,8 @@
 
 import { execFile } from "node:child_process";
 
-const URL_RE = /^http:\/\/(127\.0\.0\.1|\[::1\]):\d{1,5}\/$/;
+// The designer address, optionally with its one-time sign-in key.
+const URL_RE = /^http:\/\/(127\.0\.0\.1|\[::1\]):\d{1,5}\/(\?k=[0-9a-f]{16,128})?$/;
 
 export function openCommand(url, platform = process.platform) {
   if (!URL_RE.test(url)) return null;
@@ -14,7 +15,10 @@ export function openCommand(url, platform = process.platform) {
 
 export function openBrowser(url, onError = () => {}) {
   const c = openCommand(url);
-  if (!c) return false;
+  if (!c) {
+    onError();
+    return false;
+  }
   try {
     const child = execFile(c.cmd, c.args, { windowsHide: true, timeout: 15000 }, (err) => {
       if (err) onError();

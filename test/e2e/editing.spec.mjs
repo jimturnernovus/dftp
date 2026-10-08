@@ -192,6 +192,52 @@ for (const device of ["desktop", "tablet", "phone"]) {
       expect(await d.frame.evaluate(() => document.querySelectorAll(".subtitle [data-dftp-piece]").length)).toBe(8);
     });
 
+    test("a split word's text edit stays put: no flicker, still there after a reload", async () => {
+      const w = await wordRect(d.frame, ".subtitle", "number");
+      const g = await geometry(d.page);
+      const p = toWindow(g, w.x + w.w / 2, w.y + w.h / 2);
+      await d.page.mouse.dblclick(p.x, p.y);
+      await expect(d.page.locator("#picked")).toContainText("a single word of a text");
+      await d.page.keyboard.press("e");
+      await waitEditor(() => d.frame);
+      const n = await saves(d.page);
+      await d.page.keyboard.type("count");
+      await d.page.keyboard.press("Enter");
+      await waitSaved(d.page, n);
+      const doc = readDoc(d.root, "active-clients", device);
+      const c = doc.list.find((x) => x.piece);
+      expect(c).toBeTruthy();
+      expect(c.text).toBe("number");
+      expect(c.text_to).toBe("count");
+      // Watch the subtitle for a while: the edited word must read "count" every
+      // time, and the page must stop changing (a redraw loop would keep
+      // swapping the word back and forth).
+      const watch = () => d.frame.evaluate(async () => {
+        const sub = document.querySelector(".subtitle");
+        let changes = 0;
+        await new Promise((r) => setTimeout(r, 300));
+        const mo = new MutationObserver((list) => { changes += list.length; for (const m of list) (window.__dftpTestMut ||= []).push(m.type + ":" + (m.attributeName || "") + ":" + (m.target.nodeName || "")); });
+        mo.observe(sub, { subtree: true, childList: true, characterData: true, attributes: true });
+        const seen = new Set();
+        for (let i = 0; i < 15; i++) {
+          seen.add(sub.textContent.replace(/\s+/g, " ").trim());
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        mo.disconnect();
+        return { seen: [...seen], changes, what: window.__dftpTestMut || [] };
+      });
+      let r = await watch();
+      expect(r.seen).toEqual(["Demo data. Every name and count is invented."]);
+      expect(r.changes, JSON.stringify(r.what)).toBe(0);
+      await d.page.locator("#reload-page").click();
+      await expect(d.page.locator("#canvas")).toHaveAttribute("data-loaded", "1", { timeout: 15000 });
+      await expect.poll(async () => d.frame.evaluate(() => document.querySelector(".subtitle").textContent.replace(/\s+/g, " ").trim())).toBe("Demo data. Every name and count is invented.");
+      r = await watch();
+      expect(r.seen).toEqual(["Demo data. Every name and count is invented."]);
+      expect(r.changes, JSON.stringify(r.what)).toBe(0);
+      await expect(d.page.locator("#change-list li.is-missing")).toHaveCount(0);
+    });
+
     test("multi-select with Shift and Cmd: drag, reset and hide together", async () => {
       await clickIn(d.page, d.frame, ".kpi:nth-child(1)", PAD);
       await clickIn(d.page, d.frame, ".kpi:nth-child(2)", { ...PAD, modifiers: ["Shift"] });
@@ -245,6 +291,126 @@ for (const device of ["desktop", "tablet", "phone"]) {
     });
   });
 }
+
+// Text edits must settle: the element shows one text and the page stops
+// changing. Samples the text and counts DOM mutations under a selector.
+async function steady(frame, selector, ms = 1500) {
+  return frame.evaluate(async ([sel, span]) => {
+    const el = document.querySelector(sel);
+    await new Promise((r) => setTimeout(r, 300));
+    let changes = 0;
+    const mo = new MutationObserver((list) => { changes += list.length; });
+    mo.observe(el, { subtree: true, childList: true, characterData: true, attributes: true });
+    const seen = new Set();
+    for (let t = 0; t < span; t += 100) {
+      seen.add(el.textContent.replace(/\s+/g, " ").trim());
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    mo.disconnect();
+    return { seen: [...seen], changes };
+  }, [selector, ms]);
+}
+
+test.describe("text edits settle (desktop)", () => {
+  let d;
+  test.beforeEach(async ({ browser }) => {
+    d = await openDesigner(browser);
+  });
+  test.afterEach(async () => {
+    await d.close();
+  });
+
+  async function editText(selector, typed, { opts, clear = true } = {}) {
+    await clickIn(d.page, d.frame, selector, opts);
+    await d.page.keyboard.press("e");
+    await waitEditor(() => d.frame);
+    const n = await saves(d.page);
+    if (clear) await d.page.keyboard.press("ControlOrMeta+a");
+    if (clear) await d.page.keyboard.press("Backspace");
+    if (typed) await d.page.keyboard.type(typed);
+    await d.page.keyboard.press("Enter");
+    await waitSaved(d.page, n);
+  }
+
+  test("double-click on a text that has a text edit: refused with a notice, no doubled text, no redraw loop", async () => {
+    await editText(".subtitle", "Hello there friend");
+    let r = await steady(d.frame, ".subtitle");
+    expect(r.seen).toEqual(["Hello there friend"]);
+    expect(r.changes).toBe(0);
+    const w = await wordRect(d.frame, ".subtitle", "there");
+    const g = await geometry(d.page);
+    const p = toWindow(g, w.x + w.w / 2, w.y + w.h / 2);
+    await d.page.mouse.dblclick(p.x, p.y);
+    await expect(d.page.locator("#notices")).toContainText("This text has a text edit");
+    r = await steady(d.frame, ".subtitle");
+    expect(r.seen).toEqual(["Hello there friend"]);
+    expect(r.changes).toBe(0);
+    expect(await d.frame.evaluate(() => document.querySelectorAll(".subtitle [data-dftp-piece]").length)).toBe(0);
+  });
+
+  test("a text edited to nothing stays empty and is not marked missing", async () => {
+    await editText("h1", "");
+    const doc = readDoc(d.root);
+    const c = doc.list.find((x) => x.text_to !== undefined && x.text_to !== null);
+    expect(c && c.text_to).toBe("");
+    expect(c.text).toBe("Active Clients");
+    const r = await steady(d.frame, "h1");
+    expect(r.seen).toEqual([""]);
+    expect(r.changes).toBe(0);
+    await expect(d.page.locator("#change-list li.is-missing")).toHaveCount(0);
+    await d.page.locator("#reload-page").click();
+    await expect(d.page.locator("#canvas")).toHaveAttribute("data-loaded", "1", { timeout: 15000 });
+    await expect.poll(() => d.frame.evaluate(() => document.querySelector("h1").textContent.trim())).toBe("");
+    expect((await steady(d.frame, "h1")).changes).toBe(0);
+    await expect(d.page.locator("#change-list li.is-missing")).toHaveCount(0);
+  });
+
+  test("a word edit inside a moved element keeps the element's move", async () => {
+    await clickIn(d.page, d.frame, ".subtitle");
+    let n = await saves(d.page);
+    await dragIn(d.page, d.frame, ".subtitle", 0, 30);
+    await waitSaved(d.page, n);
+    const w = await wordRect(d.frame, ".subtitle", "number");
+    const g = await geometry(d.page);
+    const p = toWindow(g, w.x + w.w / 2, w.y + w.h / 2);
+    await d.page.mouse.dblclick(p.x, p.y);
+    await expect(d.page.locator("#picked")).toContainText("a single word of a text");
+    await d.page.keyboard.press("e");
+    await waitEditor(() => d.frame);
+    n = await saves(d.page);
+    await d.page.keyboard.type("count");
+    await d.page.keyboard.press("Enter");
+    await waitSaved(d.page, n);
+    const r = await steady(d.frame, ".subtitle");
+    expect(r.seen).toEqual(["Demo data. Every name and count is invented."]);
+    expect(r.changes).toBe(0);
+    expect(await translateOf(d.frame, ".subtitle")).toBe("0px 30px");
+    await expect(d.page.locator("#change-list li.is-missing")).toHaveCount(0);
+    const doc = readDoc(d.root);
+    expect(doc.list.filter((c) => c.missing).length).toBe(0);
+    expect(doc.list.find((c) => !c.piece).text).toBe("Demo data. Every name and number is invented.");
+  });
+
+  test("a two-line word edit keeps one space after it, not the source's line break", async () => {
+    const w = await wordRect(d.frame, ".subtitle", "data.");
+    const g = await geometry(d.page);
+    const p = toWindow(g, w.x + w.w / 2, w.y + w.h / 2);
+    await d.page.mouse.dblclick(p.x, p.y);
+    await expect(d.page.locator("#picked")).toContainText("a single word of a text");
+    await d.page.keyboard.press("e");
+    await waitEditor(() => d.frame);
+    const n = await saves(d.page);
+    await d.page.keyboard.press("ControlOrMeta+a");
+    await d.page.keyboard.type("aa");
+    await d.page.keyboard.press("Shift+Enter");
+    await d.page.keyboard.type("bb");
+    await d.page.keyboard.press("Enter");
+    await waitSaved(d.page, n);
+    const txt = await d.frame.evaluate(() => document.querySelector(".subtitle [data-dftp-piece]:nth-child(2)").textContent);
+    expect(txt).toBe("aa\nbb ");
+    expect((await steady(d.frame, ".subtitle")).changes).toBe(0);
+  });
+});
 
 test.describe("editing details (desktop)", () => {
   test("a change is saved within 300 ms; the file passes the schema; CHANGES.md is rebuilt", async ({ browser }) => {

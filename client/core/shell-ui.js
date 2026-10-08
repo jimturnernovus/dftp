@@ -35,6 +35,7 @@ const TOASTS = Object.freeze({
   "no-text": "There is no editable text here, or the element contains a private or editable field.",
   "split-failed": "No text under the pointer to break into words.",
   "split-held": "A word inside this element has its own change. Reset that word first, then edit the whole text.",
+  "split-edited": "This text has a text edit. Reset that edit first; then a double-click can break it into single words.",
   "not-on-page": "The element for that change cannot be found in the preview at the moment.",
   "undo-empty": "There is no earlier step.",
   "redo-empty": "There is no later step.",

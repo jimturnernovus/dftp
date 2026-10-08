@@ -1,7 +1,8 @@
 // Node's permission model, used as an extra fence when this Node supports
-// it: the server may read only the tool folder and the project, write only
-// the project's .dftp folder, and start a child process only to open the
-// browser. Code generation from strings is switched off as well.
+// it: the server may read only the tool folder and the project and write only
+// the project's .dftp folder. It may not start other programs at all: with
+// --open, the command outside the fence opens the browser. Code generation
+// from strings is switched off as well.
 
 import path from "node:path";
 import { DATA_DIR } from "./store.mjs";
@@ -16,14 +17,13 @@ export function netFlagSupported() {
   return process.allowedNodeEnvironmentFlags.has("--allow-net");
 }
 
-export function permissionArgs({ toolDir, root, open, net = netFlagSupported() }) {
+export function permissionArgs({ toolDir, root, net = netFlagSupported() }) {
   return [
     "--permission",
     `--allow-fs-read=${toolDir}`,
     `--allow-fs-read=${root}`,
     `--allow-fs-write=${path.join(root, DATA_DIR)}`,
     ...(net ? ["--allow-net"] : []),
-    ...(open ? ["--allow-child-process"] : []),
     "--disallow-code-generation-from-strings",
   ];
 }

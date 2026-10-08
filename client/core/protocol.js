@@ -70,6 +70,7 @@ export const TOAST_CODES = Object.freeze([
   "no-text",         // the element has no editable text, or holds private or editable content
   "split-failed",    // no text node under the pointer to break into words
   "split-held",      // a word inside the element carries its own change, so the whole text cannot be replaced
+  "split-edited",    // the text carries a text edit, so it cannot be broken into words
   "not-on-page",     // no element on the page matches that change at the moment
   "undo-empty",
   "redo-empty",

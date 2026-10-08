@@ -94,11 +94,25 @@ function withRoot(argv, root) {
   return [...out, `--root=${root}`];
 }
 
+// The only link the fenced run may ask this side to open: the designer's own
+// loopback address.
+const OPEN_LINK = /^http:\/\/(?:127\.0\.0\.1|\[::1\]):\d{1,5}\/\?k=[0-9a-f]{16,128}$/;
+
 // Run this command again inside Node's permission model and resolve to the
-// child's exit code. Callers check permissionSupported() first.
+// child's exit code. Callers check permissionSupported() first. The fenced
+// run may not start programs, so with --open it sends its link over the IPC
+// channel and this side opens the browser.
 function runSandboxed(argv, { root, open }) {
-  const args = [...permissionArgs({ toolDir: TOOL_DIR, root, open }), SCRIPT, ...withRoot(argv, root)];
-  const child = spawn(process.execPath, args, { stdio: "inherit", cwd: root, env: { ...process.env, [SANDBOX_ENV]: "1" } });
+  const args = [...permissionArgs({ toolDir: TOOL_DIR, root }), SCRIPT, ...withRoot(argv, root)];
+  const child = spawn(process.execPath, args, { stdio: ["inherit", "inherit", "inherit", "ipc"], cwd: root, env: { ...process.env, [SANDBOX_ENV]: "1" } });
+  let opened = false;
+  child.on("message", (m) => {
+    if (!open || opened || !m || m.type !== "open") return;
+    opened = true;
+    const fail = () => warn("could not open a browser; open the Designer link above");
+    if (typeof m.url !== "string" || !OPEN_LINK.test(m.url)) fail();
+    else openBrowser(m.url, fail);
+  });
   const forward = (sig) => {
     if (child.exitCode === null && child.signalCode === null) child.kill(sig);
   };
@@ -137,7 +151,10 @@ async function serve(flags, argv) {
   out(cfg.mode === "demo" ? `  Page:      the demo page (${DEMO_PAGE_DEF.label})` : `  Page:      your dev server at ${cfg.target.origin}`);
   out(`  Changes:   ${DATA_DIR}/CHANGES.md in ${cfg.root === cfg.toolDir ? "the DFTP folder" : "the project folder"} (dftp where prints the full path)`);
   out("  Stop:      Ctrl+C");
-  if (cfg.open) openBrowser(app.openLink(), () => warn("could not open a browser; open the Designer link above"));
+  if (cfg.open) {
+    if (inSandbox && typeof process.send === "function") process.send({ type: "open", url: app.openLink() });
+    else openBrowser(app.openLink(), () => warn("could not open a browser; open the Designer link above"));
+  }
   if (cfg.mode === "proxy") checkTarget(cfg.target).catch(() => {});
   await new Promise((resolve) => {
     let stopping = false;

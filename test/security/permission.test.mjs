@@ -11,10 +11,11 @@ import { TOOL_DIR, runCli, tempRoot, removeRoot, randomPort, request, saveBody, 
 const skip = !permissionSupported() && "this Node has no permission model";
 
 test("flags: read tool and project, write only .dftp", () => {
-  const args = permissionArgs({ toolDir: "/t", root: "/p", open: false, net: false });
+  const args = permissionArgs({ toolDir: "/t", root: "/p", net: false });
   assert.deepEqual(args, ["--permission", "--allow-fs-read=/t", "--allow-fs-read=/p", `--allow-fs-write=${path.join("/p", ".dftp")}`, "--disallow-code-generation-from-strings"]);
-  assert.ok(permissionArgs({ toolDir: "/t", root: "/p", open: true }).includes("--allow-child-process"));
-  assert.ok(!permissionArgs({ toolDir: "/t", root: "/p", open: false }).includes("--allow-child-process"));
+  // Never allowed to start programs, --open or not: the unfenced side opens the browser.
+  assert.ok(!permissionArgs({ toolDir: "/t", root: "/p", open: true }).includes("--allow-child-process"));
+  assert.ok(!permissionArgs({ toolDir: "/t", root: "/p" }).includes("--allow-child-process"));
   assert.ok(permissionArgs({ toolDir: "/t", root: "/p", net: true }).includes("--allow-net"));
 });
 
@@ -36,7 +37,7 @@ test("inside the fence: writes outside .dftp, child processes and eval are refus
       tryIt("eval", () => (0, eval)("1"));
       console.log(JSON.stringify(r));
     `);
-    const r = spawnSync(process.execPath, [...permissionArgs({ toolDir: TOOL_DIR, root, open: false }), probe], {
+    const r = spawnSync(process.execPath, [...permissionArgs({ toolDir: TOOL_DIR, root }), probe], {
       encoding: "utf8", env: { ...process.env, NODE_OPTIONS: "" }, timeout: 10000,
     });
     const res = JSON.parse(r.stdout.trim().split("\n").pop());
@@ -74,5 +75,42 @@ test("the command runs inside the fence and can still save", { skip }, async () 
   } finally {
     await c.stop();
     await removeRoot(root);
+  }
+});
+
+test("--open: the unfenced side opens the browser with the one-time link; the fenced server cannot start programs", { skip: skip || (process.platform === "win32" && "uses a shell-script stand-in for the opener") }, async () => {
+  const root = await tempRoot();
+  const fakeBin = await fsp.mkdtemp(path.join(path.dirname(root), "dftp-fake-open-"));
+  const log = path.join(fakeBin, "opened.txt");
+  const script = `#!/bin/sh\nprintf '%s %s\\n' "$PPID" "$*" >> '${log}'\n`;
+  for (const name of ["open", "xdg-open"]) await fsp.writeFile(path.join(fakeBin, name), script, { mode: 0o755 });
+  const port = randomPort();
+  const c = runCli(["--demo", "--root", root, "--port", String(port), "--open"], { env: { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` } });
+  try {
+    await c.waitFor(DESIGNER_LINE);
+    let line = "";
+    for (let i = 0; i < 80 && !line; i++) {
+      line = await fsp.readFile(log, "utf8").catch(() => "");
+      if (!line) await new Promise((r) => setTimeout(r, 50));
+    }
+    const m = /^(\d+) (http:\/\/127\.0\.0\.1:(\d+)\/\?k=([0-9a-f]{48}))$/.exec(line.trim());
+    assert.ok(m, `opener got: ${JSON.stringify(line)}`);
+    assert.equal(Number(m[3]), port);
+    // The opener's parent is the command the user ran, not the fenced server.
+    assert.equal(Number(m[1]), c.child.pid);
+    // The one-time link signs the browser in once.
+    const first = await request(port, { path: `/?k=${m[4]}` });
+    assert.equal(first.status, 303);
+    const again = await request(port, { path: `/?k=${m[4]}` });
+    assert.equal(again.status, 403);
+    // No permission-model warning, and the fenced server was started without
+    // the right to run programs.
+    assert.ok(!/SecurityWarning|allow-child-process/.test(c.err()), c.err());
+    const ps = spawnSync("ps", ["-o", "args=", "-ww", "-g", String(c.child.pid)], { encoding: "utf8" });
+    if (ps.status === 0 && ps.stdout.includes("--permission")) assert.ok(!ps.stdout.includes("--allow-child-process"), ps.stdout);
+  } finally {
+    await c.stop();
+    await removeRoot(root);
+    await fsp.rm(fakeBin, { recursive: true, force: true });
   }
 });
