@@ -1,0 +1,6 @@
+{
+  "target": "http://127.0.0.1:5173",
+  "pages": [{ "id": "home", "label": "Home", "path": "/" }],
+  "libraryPrefixes": ["src/components/ui/"],
+  "rootSelector": "#root"
+}

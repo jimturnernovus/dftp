@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="dftp-token" content="%TOKEN%">
+<title>DFTP — Designer for the Page</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/shell.css">
+<script type="module" src="/shell.js"></script>
+</head>
+<body data-current-view="after" data-current-mode="design">
+<header class="chrome">
+  <div class="topline">
+    <div class="tl-start">
+      <div class="ident" title="DFTP is short for Designer for the Page">
+        <span class="ident-mark" aria-hidden="true"></span>
+        <span class="ident-name">DFTP</span>
+        <span class="ident-sub">Designer for the Page</span>
+        <span class="ident-ver" id="tool-version"></span>
+      </div>
+      <label class="labelled">
+        <span>Page</span>
+        <select id="page-select" aria-label="Which page of the app to design"></select>
+      </label>
+    </div>
+    <div class="tl-mid">
+      <div class="switch switch-view" role="group" aria-label="Compare the page without and with your edits">
+        <button type="button" data-set-view="before" aria-pressed="false" title="Original page, edits hidden (key: B)">Before</button>
+        <button type="button" data-set-view="after" aria-pressed="true" class="is-on" title="Page with your edits (key: B)">After</button>
+      </div>
+    </div>
+    <div class="tl-end">
+      <span class="fit-zoom" id="fit-zoom" title="Zoom used to fit the chosen screen size into this window">100%</span>
+      <button type="button" id="panel-toggle" class="panel-toggle" aria-controls="side-panel" aria-expanded="true" title="Open or close the side panel (key: \)">Changes <span class="badge" id="panel-count">0</span></button>
+    </div>
+  </div>
+  <div class="toolrow">
+    <div class="tr-start">
+      <div class="switch" id="screen-sizes" role="group" aria-label="Simulated screen width"></div>
+      <div class="switch" id="theme-switch" role="group" aria-label="Colour scheme of the page" hidden>
+        <button type="button" data-set-theme="light">Light</button>
+        <button type="button" data-set-theme="dark">Dark</button>
+      </div>
+      <div class="switch" role="group" aria-label="Edit the layout or click through the page">
+        <button type="button" data-set-mode="design" aria-pressed="true" class="is-on" title="Pick, drag and resize elements (key: D)">Design</button>
+        <button type="button" data-set-mode="use" aria-pressed="false" title="Click, type and scroll in the page as a visitor would (key: D)">Use</button>
+      </div>
+    </div>
+    <div class="tr-end">
+      <div class="switch switch-grid" role="group" aria-label="Alignment grid">
+        <button type="button" id="grid-toggle" title="Overlay alignment lines on the page (key: G)">Grid</button>
+        <select id="grid-pitch" aria-label="Spacing between grid lines" title="Spacing between grid lines"></select>
+        <button type="button" id="grid-lock" title="When on, drags, resizes and arrow steps stop on grid lines">Snap</button>
+      </div>
+      <div class="btn-row">
+        <button type="button" id="save-state" class="save-btn" data-state="saved" data-saves="0" title="Edits are stored automatically; this stores them right away (⌘S or Ctrl+S)">Saved</button>
+        <button type="button" id="undo-btn" title="Step back (⌘Z or Ctrl+Z)" disabled>Undo</button>
+        <button type="button" id="redo-btn" title="Step forward again (⇧⌘Z or Ctrl+Y)" disabled>Redo</button>
+        <button type="button" id="reload-page" title="Fetch the page again; recorded edits stay">Reload</button>
+        <button type="button" id="clear-page" class="risky" title="Remove every edit recorded for this page at this screen size" disabled>Reset page</button>
+      </div>
+    </div>
+  </div>
+</header>
+<main class="workspace" id="workspace">
+  <div class="canvas-col">
+    <div class="notes">
+      <div class="notice-bar nb-before" id="before-note" role="status" hidden>
+        <span id="before-msg"></span>
+        <button type="button" id="before-exit" class="cta">Back to After</button>
+      </div>
+      <div class="notice-bar nb-warn" id="away-note" role="alert" hidden>
+        <span id="away-msg"></span>
+        <button type="button" id="away-return" class="cta">Back</button>
+      </div>
+      <div class="notice-bar nb-warn" id="nolayer-note" role="alert" hidden>
+        <span id="nolayer-msg"></span>
+        <button type="button" id="nolayer-retry" class="cta">Reload</button>
+      </div>
+    </div>
+    <p class="boot-error" id="boot-error" role="alert" hidden></p>
+    <section class="canvas" id="canvas" data-loaded="0" aria-label="Page preview">
+      <div class="viewport-box" id="viewport-box">
+        <iframe id="page-frame" title="Preview of the page you are designing" sandbox="allow-scripts allow-same-origin allow-forms" referrerpolicy="no-referrer"></iframe>
+      </div>
+    </section>
+  </div>
+  <aside class="side-panel" id="side-panel" aria-label="Current pick and recorded edits">
+    <section class="panel-sec">
+      <div class="panel-sec-head">
+        <h2>Selected</h2>
+        <button type="button" class="icon-btn" id="panel-close" aria-label="Hide this panel" title="Hide this panel (key: \)">×</button>
+      </div>
+      <div id="picked"></div>
+    </section>
+    <section class="panel-sec fill">
+      <div class="panel-sec-head">
+        <h2>Changes <span class="badge" id="change-count">0</span></h2>
+      </div>
+      <ol class="change-list" id="change-list"></ol>
+      <div class="export-row">
+        <button type="button" id="copy-page" class="cta" title="Copy the edits for the current page at the current width as text, ready to paste to a coding assistant">Copy</button>
+        <button type="button" id="copy-every" title="Copy CHANGES.md, which covers all pages and screen sizes">Copy all</button>
+        <button type="button" id="save-file" title="Save the JSON file for the current page at the current width">Download</button>
+      </div>
+      <p class="status-line fine" id="save-status" aria-live="polite"></p>
+      <p class="soft fine">Your assistant reads <code id="md-path">.dftp/CHANGES.md</code> in the project folder.</p>
+    </section>
+  </aside>
+</main>
+<footer class="key-hints" id="key-hints">
+  <span class="hint-set" data-for="design"><b>B</b> before / after · <b>\</b> panel · <b>D</b> to Use · click picks · Shift or ⌘/Ctrl-click adds · drag moves (Shift: one axis) · grips resize · arrows step 1 px, Shift 10 · Option/Alt-click or P: parent · double-click: words · E or Return: text · Delete: hide · R: reset · Esc: clear · ⌘Z: undo · G: grid</span>
+  <span class="hint-set" data-for="use"><b>B</b> before / after · <b>\</b> panel · <b>D</b> back to Design · the page works as usual: click, type, scroll · edits stay drawn</span>
+  <span class="hint-set" data-for="before"><b>B</b> or the After button to return · <b>\</b> panel · original page shown; nothing is edited or stored</span>
+</footer>
+<div class="notices" id="notices" aria-live="polite"></div>
+</body>
+</html>

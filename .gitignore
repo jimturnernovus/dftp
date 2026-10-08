@@ -1,0 +1,8 @@
+node_modules/
+.dftp/
+.DS_Store
+*.log
+.env*
+test-results/
+playwright-report/
+*.tmp

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fixture: private fields</title>
+</head>
+<body>
+  <main>
+    <h1>Private fields</h1>
+    <form id="form" autocomplete="off">
+      <p><label>Password <input id="pw" type="password" placeholder="Password"></label></p>
+      <p><label>Nickname <input id="nick" type="text" placeholder="Nickname"></label></p>
+      <p><label>Card <input id="cc" type="text" autocomplete="cc-number" placeholder="Card number"></label></p>
+      <input id="hid" type="hidden" value="HIDDENVALUE-4K8Q">
+      <p><textarea id="notes" placeholder="Notes"></textarea></p>
+      <div id="priv" data-dftp-private>MARKEDPRIVATE-7Q2W</div>
+      <div id="editable" contenteditable="true">Editable</div>
+    </form>
+    <div id="note-box">Team notes <textarea id="preset">PRESETNOTE-5J2M</textarea></div>
+  </main>
+</body>
+</html>

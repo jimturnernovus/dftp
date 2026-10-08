@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions: read-all
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Lint, hygiene and tests (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22", "24"]
+    steps:
+      - name: Check out
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install development tools
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Install the test browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Hygiene
+        run: npm run hygiene
+
+      - name: Skill matches CLAUDE.md
+        run: node scripts/build-skill.mjs --check
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Security tests
+        run: npm run test:security
+
+      - name: Browser tests
+        run: npm run test:e2e
+
+      - name: Audit runtime dependencies
+        run: npm audit --omit=dev
+
+  vite-example:
+    name: Vite example through the proxy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "24"
+
+      - name: Install development tools
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Install the example app
+        working-directory: examples/vite-react
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Install the test browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Proxy tests with the real Vite dev server
+        run: npx playwright test test/e2e/proxy.spec.mjs
+        env:
+          DFTP_VITE_EXAMPLE: ${{ github.workspace }}/examples/vite-react

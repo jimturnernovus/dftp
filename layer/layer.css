@@ -1,0 +1,157 @@
+/*
+ * Styles for the design layer. The same file is loaded twice: once in the
+ * page (only the html.dftp-design rules can match there) and once inside the
+ * layer's closed shadow root (only the .dftp-* rules can match there). Sizes
+ * inside the layer are multiplied by --dftp-k (1 / the designer's zoom) so
+ * handles and labels keep their size on screen when the page is scaled down.
+ */
+
+/* ---- in the page, Design mode only ---- */
+
+html.dftp-design [data-dftp] {
+  outline: 1px dashed rgba(234, 88, 12, 0.85) !important;
+  outline-offset: 1px !important;
+}
+
+html.dftp-design,
+html.dftp-design * {
+  cursor: default !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
+/* ---- inside the layer ---- */
+
+.dftp-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  font: 400 calc(12px * var(--dftp-k, 1)) / 1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: #0f172a;
+  -webkit-font-smoothing: antialiased;
+}
+
+.dftp-box {
+  position: fixed;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.dftp-hover {
+  border: calc(1px * var(--dftp-k, 1)) solid #0d9488;
+  background: rgba(13, 148, 136, 0.07);
+}
+
+.dftp-sel {
+  border: calc(2px * var(--dftp-k, 1)) solid #ea580c;
+  box-shadow: 0 0 0 calc(1px * var(--dftp-k, 1)) rgba(255, 255, 255, 0.6);
+}
+
+.dftp-extra {
+  border: calc(2px * var(--dftp-k, 1)) dashed #ea580c;
+  background: rgba(234, 88, 12, 0.07);
+}
+
+.dftp-grid {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.dftp-label {
+  position: fixed;
+  pointer-events: none;
+  max-width: 90vw;
+  overflow: hidden;
+  padding: calc(2px * var(--dftp-k, 1)) calc(6px * var(--dftp-k, 1));
+  border-radius: calc(4px * var(--dftp-k, 1));
+  background: #c2410c;
+  color: #fff;
+  font: 600 calc(11px * var(--dftp-k, 1)) / 1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dftp-h {
+  position: fixed;
+  box-sizing: border-box;
+  width: calc(10px * var(--dftp-k, 1));
+  height: calc(10px * var(--dftp-k, 1));
+  margin: calc(-5px * var(--dftp-k, 1)) 0 0 calc(-5px * var(--dftp-k, 1));
+  border: calc(2px * var(--dftp-k, 1)) solid #ea580c;
+  border-radius: calc(2px * var(--dftp-k, 1));
+  background: #fff;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.dftp-h[data-dir="n"],
+.dftp-h[data-dir="s"] { cursor: ns-resize; }
+.dftp-h[data-dir="e"],
+.dftp-h[data-dir="w"] { cursor: ew-resize; }
+.dftp-h[data-dir="ne"],
+.dftp-h[data-dir="sw"] { cursor: nesw-resize; }
+.dftp-h[data-dir="nw"],
+.dftp-h[data-dir="se"] { cursor: nwse-resize; }
+
+.dftp-editor {
+  position: fixed;
+  box-sizing: border-box;
+  z-index: 1;
+  padding: calc(6px * var(--dftp-k, 1));
+  border: calc(2px * var(--dftp-k, 1)) solid #ea580c;
+  border-radius: calc(8px * var(--dftp-k, 1));
+  background: #fff;
+  box-shadow: 0 calc(8px * var(--dftp-k, 1)) calc(24px * var(--dftp-k, 1)) rgba(15, 23, 42, 0.35);
+  pointer-events: auto;
+  cursor: default;
+  font-size: calc(13px * var(--dftp-k, 1));
+}
+
+.dftp-ta {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: calc(56px * var(--dftp-k, 1));
+  margin: 0;
+  padding: calc(4px * var(--dftp-k, 1)) calc(6px * var(--dftp-k, 1));
+  border: calc(1px * var(--dftp-k, 1)) solid #cbd5e1;
+  border-radius: calc(4px * var(--dftp-k, 1));
+  background: #fff;
+  color: #0f172a;
+  font: inherit;
+  resize: vertical;
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.dftp-row {
+  display: flex;
+  gap: calc(6px * var(--dftp-k, 1));
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: calc(6px * var(--dftp-k, 1));
+}
+
+.dftp-tip {
+  flex: 1;
+  color: #64748b;
+  font-size: calc(11px * var(--dftp-k, 1));
+}
+
+.dftp-btn {
+  padding: calc(2px * var(--dftp-k, 1)) calc(10px * var(--dftp-k, 1));
+  border: calc(1px * var(--dftp-k, 1)) solid #cbd5e1;
+  border-radius: calc(4px * var(--dftp-k, 1));
+  background: #f8fafc;
+  color: #0f172a;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dftp-save {
+  border-color: #c2410c;
+  background: #c2410c;
+  color: #fff;
+}

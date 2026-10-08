@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Active Clients · Example Services Co.</title>
+<link rel="stylesheet" href="/demo.css">
+<script src="/demo.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Example Services Co. home">
+      <span class="brand-mark" aria-hidden="true">ES</span>
+      <span class="brand-name">Example Services Co.</span>
+    </a>
+    <div class="topbar-actions">
+      <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch between light and dark">
+        <svg class="icon icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v2.5M12 19v2.5M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M2.5 12H5M19 12h2.5M4.6 19.4l1.8-1.8M17.6 6.4l1.8-1.8"/></svg>
+        <svg class="icon icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg>
+      </button>
+      <span class="avatar" title="Signed in as A. Rivera (invented)">AR</span>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="page-head">
+      <div class="titles">
+        <h1 class="page-title">Active Clients</h1>
+        <p class="subtitle">Demo data. Every name and number is invented.</p>
+      </div>
+      <div class="btn-group" role="group" aria-label="Page actions">
+        <button class="btn btn-ghost" id="export-btn" type="button">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/></svg>
+          <span>Export CSV</span>
+        </button>
+        <button class="btn btn-primary" id="new-btn" type="button">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <span>New client</span>
+        </button>
+      </div>
+    </section>
+    <p class="demo-note" id="demo-note" role="status" hidden></p>
+
+    <section class="kpis" aria-label="Summary">
+      <article class="kpi">
+        <p class="kpi-label">Active clients</p>
+        <p class="kpi-value">48</p>
+        <p class="kpi-note up">+4 since last month</p>
+      </article>
+      <article class="kpi">
+        <p class="kpi-label">Monthly recurring revenue</p>
+        <p class="kpi-value">$86,400</p>
+        <p class="kpi-note up">+3.1% on last month</p>
+      </article>
+      <article class="kpi">
+        <p class="kpi-label">Billed this year across every service plan</p>
+        <p class="kpi-value">$612,000</p>
+        <p class="kpi-note">Jan 1 to today</p>
+      </article>
+      <article class="kpi">
+        <p class="kpi-label">New this month</p>
+        <p class="kpi-value">6</p>
+        <div class="meter" role="img" aria-label="6 of a target of 10">
+          <span class="meter-fill"></span>
+        </div>
+        <p class="kpi-note">6 of a target of 10</p>
+      </article>
+    </section>
+
+    <section class="toolbar">
+      <label class="search">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+        <input id="search" type="search" placeholder="Search clients, contacts, phone numbers…" aria-label="Search clients" autocomplete="off">
+      </label>
+      <button class="btn btn-ghost" id="filters-toggle" type="button" aria-expanded="true" aria-controls="filters">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+        <span>Filters</span>
+        <span class="count" id="filter-count">0</span>
+      </button>
+    </section>
+
+    <section class="filters" id="filters" aria-label="Filters">
+      <div class="filter-group filter-status">
+        <p class="filter-label">Status</p>
+        <div class="chips" role="group" aria-label="Status">
+          <button class="chip is-on" type="button" data-status="all">All</button>
+          <button class="chip" type="button" data-status="active">Active</button>
+          <button class="chip" type="button" data-status="trial">Trial</button>
+          <button class="chip" type="button" data-status="paused">Paused</button>
+          <button class="chip" type="button" data-status="overdue">Overdue</button>
+        </div>
+      </div>
+      <div class="filter-group">
+        <p class="filter-label">Started</p>
+        <div class="filter-row">
+          <select id="f-month" aria-label="Month started">
+            <option value="">Any month</option>
+            <option value="1">January</option>
+            <option value="2">February</option>
+            <option value="3">March</option>
+            <option value="4">April</option>
+            <option value="5">May</option>
+            <option value="6">June</option>
+            <option value="7">July</option>
+            <option value="8">August</option>
+            <option value="9">September</option>
+            <option value="10">October</option>
+            <option value="11">November</option>
+            <option value="12">December</option>
+          </select>
+          <select id="f-year" aria-label="Year started">
+            <option value="">Any year</option>
+            <option value="2023">2023</option>
+            <option value="2024">2024</option>
+            <option value="2025">2025</option>
+          </select>
+        </div>
+      </div>
+      <div class="filter-group">
+        <p class="filter-label">Monthly amount ($)</p>
+        <div class="filter-row range">
+          <input id="f-monthly-min" type="number" min="0" step="50" placeholder="Min" aria-label="Monthly amount from">
+          <span class="range-to">to</span>
+          <input id="f-monthly-max" type="number" min="0" step="50" placeholder="Max" aria-label="Monthly amount up to">
+        </div>
+      </div>
+      <div class="filter-group">
+        <p class="filter-label">Billed to date ($)</p>
+        <div class="filter-row range">
+          <input id="f-billed-min" type="number" min="0" step="500" placeholder="Min" aria-label="Billed from">
+          <span class="range-to">to</span>
+          <input id="f-billed-max" type="number" min="0" step="500" placeholder="Max" aria-label="Billed up to">
+        </div>
+      </div>
+      <div class="filter-actions">
+        <button class="btn btn-link" id="f-clear" type="button">Clear filters</button>
+      </div>
+    </section>
+
+    <section class="table-card" aria-label="Clients">
+      <div class="table-scroll">
+        <table class="clients">
+          <thead>
+            <tr>
+              <th scope="col">Client</th>
+              <th scope="col">Business</th>
+              <th scope="col" class="col-contact">Contact</th>
+              <th scope="col">Phone</th>
+              <th scope="col">Started</th>
+              <th scope="col" class="num">Monthly</th>
+              <th scope="col" class="num">Billed</th>
+              <th scope="col">Usage</th>
+              <th scope="col">Status</th>
+              <th scope="col"><span class="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="empty" hidden>No clients match these filters.</p>
+      <footer class="pager">
+        <p class="pager-info" id="pager-info">1–12 of 48</p>
+        <div class="pager-buttons">
+          <button class="btn btn-ghost btn-sm" id="prev" type="button">Previous</button>
+          <span class="pages" id="pages"></span>
+          <button class="btn btn-ghost btn-sm" id="next" type="button">Next</button>
+        </div>
+      </footer>
+    </section>
+
+    <template id="row-template">
+      <tr class="row" tabindex="0">
+        <td data-label="Client"><span class="client-id"></span></td>
+        <td data-label="Business">
+          <div class="biz">
+            <span class="biz-name"></span>
+            <span class="biz-city"></span>
+          </div>
+        </td>
+        <td data-label="Contact" class="col-contact"><span class="contact"></span></td>
+        <td data-label="Phone"><span class="phone"></span></td>
+        <td data-label="Started"><time class="started"></time></td>
+        <td data-label="Monthly" class="num"><span class="monthly"></span></td>
+        <td data-label="Billed" class="num"><span class="billed"></span></td>
+        <td data-label="Usage">
+          <div class="usage">
+            <div class="bar"><span class="bar-fill"></span></div>
+            <span class="pct"></span>
+          </div>
+        </td>
+        <td data-label="Status"><span class="badge"></span></td>
+        <td class="actions"><button class="icon-btn row-menu" type="button" aria-label="Row actions">⋯</button></td>
+      </tr>
+    </template>
+
+    <template id="detail-template">
+      <tr class="detail">
+        <td colspan="10">
+          <div class="detail-body">
+            <dl class="detail-grid">
+              <div><dt>Plan</dt><dd class="d-plan"></dd></div>
+              <div><dt>Account owner</dt><dd class="d-owner"></dd></div>
+              <div><dt>Next invoice</dt><dd class="d-next"></dd></div>
+              <div><dt>Email</dt><dd class="d-email"></dd></div>
+            </dl>
+            <p class="detail-note">Notes are invented for the demo and never leave this page.</p>
+          </div>
+        </td>
+      </tr>
+    </template>
+  </main>
+
+  <footer class="site-footer">
+    <p>Example Services Co. is a fictional business. This page is the DFTP demo.</p>
+  </footer>
+</body>
+</html>
