@@ -9,6 +9,10 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   reporter: [["list"]],
-  use: { headless: true, trace: "off", screenshot: "off", video: "off" },
+  // On CI a failing test keeps its trace and screenshot (uploaded by the
+  // workflow), so a failure that only shows up there can be looked at.
+  use: process.env.CI
+    ? { headless: true, trace: "retain-on-failure", screenshot: "only-on-failure", video: "off" }
+    : { headless: true, trace: "off", screenshot: "off", video: "off" },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 });
