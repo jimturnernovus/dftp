@@ -2,6 +2,19 @@
 
 DFTP (Designer for the Page) follows [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+- Pages that scroll inside their own container (an app shell with a
+  scrolling `<main>`) keep scrolling with the wheel and trackpad after an
+  element is moved: clipping is no longer lifted on the boxes around a
+  scroll container.
+- An always-visible scrollbar for the page's main scroll area, drawn by the
+  layer (drag, click the track, or scroll over it), in Design and Use mode.
+- Dropping an element entirely outside its parent detaches it: the parent
+  closes up, the element keeps its dropped position, and `CHANGES.md` names
+  the container it left (`detached`, `container`). Dropping it back over the
+  parent puts it back.
+
 ## 0.1.0
 
 First release.

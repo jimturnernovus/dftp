@@ -27,7 +27,10 @@ import { coerceChange, isKey, isLoc, splitLoc, newChangeId, LIMITS } from "./sch
 import { pageIdentity } from "./devices.js";
 
 const GRIPS = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
-const PROPS = ["translate", "width", "min-width", "max-width", "flex", "height", "min-height", "max-height", "box-sizing", "display", "position", "z-index"];
+const PROPS = [
+  "translate", "width", "min-width", "max-width", "flex", "height", "min-height", "max-height", "box-sizing", "display", "position", "z-index",
+  "left", "top", "margin-top", "margin-right", "margin-bottom", "margin-left",
+];
 const UNDO_MAX = 200;
 const NUDGE_MERGE_MS = 700;
 const DRAG_START_PX = 3;
@@ -96,6 +99,13 @@ export function startLayer(opts) {
   const drawnNodes = new WeakMap();
   const drawnPh = new WeakMap();
   const clipSaved = new WeakMap();  // el -> [overflow value, priority]
+  const anchorSaved = new WeakMap(); // el -> [position value, priority]: scrollers made positioned for detached elements
+  const flowBox = new WeakMap();    // detached el -> {x, y, w, h}: its in-flow box, relative to what it is placed against
+  let anchored = [];
+  // A measurement briefly restores normal layout for a detached element,
+  // which writes to the page. That is done after an edit, an undo,
+  // a reset or a resize; a redraw caused by the page itself reuses the boxes.
+  let remeasure = true;
   const wrapSaved = new WeakMap();  // el -> {holder, value, prio}: white-space set so line breaks show
   let unclipped = [];
 
@@ -124,6 +134,8 @@ export function startLayer(opts) {
   let editor = null;
   let ta = null;
   let handles = [];
+  let rail = null;
+  let railThumb = null;
   const extraBoxes = [];
 
   const div = (cls) => {
@@ -174,6 +186,11 @@ export function startLayer(opts) {
       wrap.appendChild(h);
       return h;
     });
+    rail = div("dftp-rail");
+    railThumb = div("dftp-rail-thumb");
+    rail.appendChild(railThumb);
+    wrap.appendChild(rail);
+    hookRail();
     editor = div("dftp-editor");
     editor.setAttribute("role", "dialog");
     editor.setAttribute("aria-label", "Text editor");
@@ -198,7 +215,7 @@ export function startLayer(opts) {
     editor.append(ta, row);
     wrap.appendChild(editor);
     shadow.append(styleLink(), wrap);
-    [hoverBox, selBox, label, editor, gridEl, ...handles].forEach(hide);
+    [hoverBox, selBox, label, editor, gridEl, rail, ...handles].forEach(hide);
     cancel.addEventListener("click", () => closeEditor());
     ok.addEventListener("click", () => saveEditor());
     ta.addEventListener("keydown", (e) => {
@@ -737,22 +754,30 @@ export function startLayer(opts) {
     const moved = !!(c.dx || c.dy);
     const hasW = c.w !== undefined && c.w !== null;
     const hasH = c.h !== undefined && c.h !== null;
+    // A detached element leaves the flow (absolute) but is pinned to the box
+    // it had in the flow, so its parent closes up and it stays put on screen.
+    const fb = c.detached && !c.hidden && canDetach(st) ? flowBox.get(el) : null;
     set("translate", moved ? `${Math.round(c.dx || 0)}px ${Math.round(c.dy || 0)}px` : null);
-    set("width", hasW ? `${Math.round(c.w)}px` : null);
+    set("left", fb ? `${fb.x}px` : null);
+    set("top", fb ? `${fb.y}px` : null);
+    for (const side of ["top", "right", "bottom", "left"]) set(`margin-${side}`, fb ? "0px" : null);
+    if (fb && !hasW) set("width", `${fb.w}px`);
+    else set("width", hasW ? `${Math.round(c.w)}px` : null);
     set("min-width", hasW ? "0px" : null);
     set("max-width", hasW ? "none" : null);
     set("flex", hasW ? "0 0 auto" : null);
-    set("height", hasH ? `${Math.round(c.h)}px` : null);
+    if (fb && !hasH) set("height", `${fb.h}px`);
+    else set("height", hasH ? `${Math.round(c.h)}px` : null);
     set("min-height", hasH ? "0px" : null);
     set("max-height", hasH ? "none" : null);
     // A recorded size is the outer (border-box) size the user saw while
     // dragging, whatever box model the page uses.
-    set("box-sizing", hasW || hasH ? "border-box" : null);
+    set("box-sizing", hasW || hasH || fb ? "border-box" : null);
     // translate and width have no effect on a plain inline box, so such an
     // element is drawn as inline-block while it carries one of them.
     set("display", c.hidden ? "none" : (moved || hasW || hasH) && st.wasInline ? "inline-block" : null);
     // Lift a moved element over its siblings so the drop position is visible.
-    set("position", moved && st.wasStatic ? "relative" : null);
+    set("position", fb ? "absolute" : moved && st.wasStatic ? "relative" : null);
     set("z-index", moved ? "40" : null);
     // Written only when it changes, so a redraw does not disturb the page
     // (an attribute write is a DOM mutation even with the same value).
@@ -884,11 +909,31 @@ export function startLayer(opts) {
 
   // A box that clips its content would cut off an element dragged out of it,
   // so clipping ancestors show their overflow while a move is shown.
+  //
+  // Only up to the nearest scroll container, and never a box that holds one.
+  // App shells commonly pin a scrolling <main> to the window height with
+  // overflow: hidden on the boxes around it; turning that clipping off let
+  // the scroller grow to its full content height, so wheel and trackpad
+  // scrolling had nothing left to scroll once any element was moved.
+  const scrollsY = (cs) => /(auto|scroll)/.test(`${cs.overflowY} ${cs.overflowX}`);
+  let scrollerCache = null;
+  function scrollers() {
+    if (scrollerCache) return scrollerCache;
+    scrollerCache = [];
+    for (const n of document.body ? document.body.querySelectorAll("*") : []) {
+      if (n === host) continue;
+      if (n.scrollHeight <= n.clientHeight + 1 && n.scrollWidth <= n.clientWidth + 1) continue;
+      if (scrollsY(getComputedStyle(n))) scrollerCache.push(n);
+    }
+    return scrollerCache;
+  }
   function unclipFor(el) {
     const root = rootEl();
     for (let p = el.parentElement; p && p !== root && p !== document.body && p !== document.documentElement; p = p.parentElement) {
       const cs = getComputedStyle(p);
+      if (scrollsY(cs)) break;
       if (![cs.overflowX, cs.overflowY].some((v) => v === "hidden" || v === "clip")) continue;
+      if (scrollers().some((x) => p.contains(x))) break;
       if (!clipSaved.has(p)) {
         clipSaved.set(p, [p.style.getPropertyValue("overflow"), p.style.getPropertyPriority("overflow")]);
         unclipped.push(p);
@@ -904,12 +949,98 @@ export function startLayer(opts) {
       clipSaved.delete(p);
     }
     unclipped = [];
+    scrollerCache = null;
+  }
+  function restoreAnchors() {
+    for (const p of anchored) {
+      const s = anchorSaved.get(p);
+      if (s && s[0]) p.style.setProperty("position", s[0], s[1]);
+      else p.style.removeProperty("position");
+      anchorSaved.delete(p);
+    }
+    anchored = [];
+  }
+
+  // ---------------------------------------------------------------- detaching from the parent
+
+  // An element dropped entirely outside its parent's box no longer belongs
+  // to that parent: the change is flagged "detached", the element becomes
+  // absolutely positioned so the parent shrinks to its other children, and
+  // its position on screen does not change. Dropping it over the parent again undoes that.
+  // Elements that are already absolute, fixed or sticky are out of the flow
+  // (or tied to a scroller) and are never detached.
+  const canDetach = (st) => !!st && (st.position0 === "static" || st.position0 === "relative");
+
+  function containerOf(el) {
+    let p = parentOf(el);
+    while (p && getComputedStyle(p).display === "contents") p = parentOf(p);
+    return p;
+  }
+
+  // The box an absolute element is placed against. A scroll container on the
+  // way up is made positioned, so the element keeps scrolling with it.
+  function anchorFor(el) {
+    for (let p = el.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+      const cs = getComputedStyle(p);
+      const makesBlock = cs.position !== "static" || cs.transform !== "none" || (cs.translate && cs.translate !== "none") ||
+        cs.filter !== "none" || cs.perspective !== "none" || /paint|layout|strict|content/.test(cs.contain || "");
+      if (makesBlock) return p;
+      if (scrollsY(cs)) {
+        if (!anchorSaved.has(p)) {
+          anchorSaved.set(p, [p.style.getPropertyValue("position"), p.style.getPropertyPriority("position")]);
+          anchored.push(p);
+        }
+        p.style.setProperty("position", "relative", "important");
+        return p;
+      }
+    }
+    return null;
+  }
+
+  // Fractions are kept: a width rounded down by a fraction of a pixel can
+  // wrap the element's text onto a second line.
+  const frac = (v) => Math.round(v * 100) / 100;
+  function measureFlow(el) {
+    const a = anchorFor(el);
+    const r = el.getBoundingClientRect();
+    if (!a) return { x: frac(r.left + window.scrollX), y: frac(r.top + window.scrollY), w: frac(r.width), h: frac(r.height) };
+    const b = a.getBoundingClientRect();
+    return {
+      x: frac(r.left - b.left - a.clientLeft + a.scrollLeft),
+      y: frac(r.top - b.top - a.clientTop + a.scrollTop),
+      w: frac(r.width),
+      h: frac(r.height),
+    };
+  }
+
+  const disjoint = (a, b) => a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom;
+
+  // Called when a move ends. True when the element left or rejoined its
+  // parent (the page then needs a full redraw).
+  function updateDetached(el, c) {
+    const box = containerOf(el);
+    const st = saved.get(el);
+    const out = !!box && canDetach(st) && !c.hidden && !!(c.dx || c.dy) && disjoint(el.getBoundingClientRect(), box.getBoundingClientRect());
+    if (out === !!c.detached) return false;
+    if (out) {
+      const d = describe(box);
+      c.detached = true;
+      c.container = { tag: tagOf(box) };
+      if (d.loc) c.container.loc = d.loc;
+      if (d.part && PATH_RE.test(d.path)) c.container.path = d.path;
+    } else {
+      delete c.detached;
+      delete c.container;
+    }
+    return true;
   }
 
   // Undo all drawing on the page (inline styles, text, clipping). The
   // records in S.changes stay as they are.
   function takeOffAll() {
     restoreClips();
+    restoreAnchors();
+    remeasure = true;
     for (const el of document.querySelectorAll(`[${MARK}]`)) {
       applyTo(el, null);
       applyText(el, null);
@@ -1131,6 +1262,14 @@ export function startLayer(opts) {
         }
       }
     }
+    // Measure every detached element with normal layout restored for all
+    // of them at once; otherwise one would be measured beside a gap left by
+    // another.
+    if (remeasure) restoreAnchors();
+    const outs = found.filter((f) => f.el && f.c.detached && !f.c.hidden && (remeasure || !flowBox.has(f.el)));
+    remeasure = false;
+    for (const { c, el } of outs) applyTo(el, { ...c, detached: false, dx: 0, dy: 0 });
+    for (const { el } of outs) flowBox.set(el, measureFlow(el));
     for (const { c, el } of found) {
       if (!el) continue;
       if (S.settled && stampCode(c)) moved = true;
@@ -1228,6 +1367,7 @@ export function startLayer(opts) {
   }
   const snapshot = () => JSON.stringify(list());
   function loadSnapshot(json) {
+    remeasure = true;
     let arr;
     try {
       arr = JSON.parse(json);
@@ -1255,9 +1395,118 @@ export function startLayer(opts) {
 
   let hoverEl = null;
 
+  // ---------------------------------------------------------------- scroll rail
+
+  // A scrollbar that is always shown, for the page's main scroll area (the
+  // largest visible scroll container, or the document itself), in both
+  // modes. Many pages hide their scrollbars, and trackpad users then have no
+  // visible way to scroll. It is drawn in the layer, so it takes no space
+  // from the page and the layout being designed stays exactly as it is.
+  let railTarget = null;
+  let railDrag = null;
+  const docEl = () => document.scrollingElement || document.documentElement;
+  function docCanScroll() {
+    const d = docEl();
+    if (d.scrollHeight <= d.clientHeight + 1) return false;
+    return getComputedStyle(document.documentElement).overflowY !== "hidden" && (!document.body || getComputedStyle(document.body).overflowY !== "hidden");
+  }
+  function stillScrolls(n) {
+    if (!n || !n.isConnected) return false;
+    if (n === docEl()) return docCanScroll();
+    return n.scrollHeight > n.clientHeight + 1 && /(auto|scroll)/.test(getComputedStyle(n).overflowY);
+  }
+  function railScroller() {
+    if (stillScrolls(railTarget)) return railTarget;
+    railTarget = null;
+    let best = 0;
+    for (const n of document.body ? document.body.querySelectorAll("*") : []) {
+      if (n === host || n.scrollHeight <= n.clientHeight + 1) continue;
+      if (!/(auto|scroll)/.test(getComputedStyle(n).overflowY)) continue;
+      const r = n.getBoundingClientRect();
+      const vis = Math.max(0, Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0)) * Math.max(0, Math.min(r.right, window.innerWidth) - Math.max(r.left, 0));
+      if (vis > best) {
+        best = vis;
+        railTarget = n;
+      }
+    }
+    if (!railTarget && docCanScroll()) railTarget = docEl();
+    return railTarget;
+  }
+  function drawRail() {
+    if (!rail) return;
+    const sc = S.active ? railScroller() : null;
+    if (!sc) {
+      hide(rail);
+      return;
+    }
+    const whole = sc === docEl();
+    const r = whole ? { top: 0, bottom: window.innerHeight, right: window.innerWidth } : sc.getBoundingClientRect();
+    const top = Math.max(0, r.top);
+    const height = Math.min(window.innerHeight, r.bottom) - top;
+    if (height < 40) {
+      hide(rail);
+      return;
+    }
+    const k = 1 / (S.scale || 1);
+    const w = Math.ceil(12 * k);
+    rail.style.display = "block";
+    rail.style.left = `${Math.min(r.right, window.innerWidth) - w}px`;
+    rail.style.top = `${top}px`;
+    rail.style.width = `${w}px`;
+    rail.style.height = `${height}px`;
+    const view = whole ? window.innerHeight : sc.clientHeight;
+    const range = Math.max(0, sc.scrollHeight - view);
+    const th = Math.max(24 * k, Math.round(height * Math.min(1, view / sc.scrollHeight)));
+    railThumb.style.height = `${th}px`;
+    railThumb.style.top = `${range ? (sc.scrollTop / range) * (height - th) : 0}px`;
+  }
+  function hookRail() {
+    rail.addEventListener("pointerdown", (e) => {
+      const sc = railScroller();
+      if (!sc || e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.target === railThumb) {
+        const range = sc.scrollHeight - (sc === docEl() ? window.innerHeight : sc.clientHeight);
+        railDrag = { y: e.clientY, top: sc.scrollTop, sc, per: range / Math.max(1, rail.clientHeight - railThumb.offsetHeight) };
+        rail.classList.add("dftp-rail-on");
+        try {
+          rail.setPointerCapture(e.pointerId);
+        } catch {
+          // capture is a convenience only
+        }
+        return;
+      }
+      // A press on the track pages up or down.
+      const t = railThumb.getBoundingClientRect();
+      const page = (sc === docEl() ? window.innerHeight : sc.clientHeight) * 0.9;
+      sc.scrollTop += e.clientY < t.top ? -page : page;
+    });
+    rail.addEventListener("pointermove", (e) => {
+      if (!railDrag) return;
+      e.stopPropagation();
+      railDrag.sc.scrollTop = railDrag.top + (e.clientY - railDrag.y) * railDrag.per;
+    });
+    const end = () => {
+      railDrag = null;
+      rail.classList.remove("dftp-rail-on");
+    };
+    rail.addEventListener("pointerup", end);
+    rail.addEventListener("pointercancel", end);
+    // The rail is not inside the scroller, so the wheel over it is passed on.
+    rail.addEventListener("wheel", (e) => {
+      const sc = railScroller();
+      if (!sc) return;
+      e.preventDefault();
+      sc.scrollTop += e.deltaY;
+      sc.scrollLeft += e.deltaX;
+    }, { passive: false });
+  }
+
   function draw() {
     if (!host) return;
     if (!host.isConnected) document.documentElement.appendChild(host);
+    drawRail();
     if (editing) placeEditor();
     const design = S.active && S.mode === "design";
     if (design && hoverEl && hoverEl !== S.sel && hoverEl.isConnected) place(hoverBox, hoverEl.getBoundingClientRect());
@@ -1666,7 +1915,17 @@ export function startLayer(opts) {
         const c = S.changes.get(keyFor(el));
         if (c) touch(el, c);
       }
-      for (const el of els) if (el.isConnected && (S.changes.get(keyFor(el)) || {}).dx) unclipFor(el);
+      let regrouped = false;
+      if (op.kind === "move") {
+        for (const el of els) {
+          const c = el.isConnected ? S.changes.get(keyFor(el)) : null;
+          if (c && updateDetached(el, c)) regrouped = true;
+        }
+      }
+      if (regrouped) {
+        remeasure = true;
+        reapplyAll();
+      } else for (const el of els) if (el.isConnected && (S.changes.get(keyFor(el)) || {}).dx) unclipFor(el);
       commit();
       draw();
     } else if (op.clickPick && !(op.clickPick === S.sel && !S.extra.length)) {
@@ -1765,6 +2024,7 @@ export function startLayer(opts) {
     // Quick repeats are one undo step.
     if (Date.now() - S.lastNudge > NUDGE_MERGE_MS) pushUndo();
     S.lastNudge = Date.now();
+    let regrouped = false;
     for (const x of items) {
       const c = changeFor(x);
       if (!c) continue;
@@ -1772,7 +2032,12 @@ export function startLayer(opts) {
       c.dy = clampMove(Math.round((c.dy || 0) + ddy));
       applyTo(x, c);
       touch(x, c);
-      if (c.dx || c.dy) unclipFor(x);
+      if (updateDetached(x, c)) regrouped = true;
+      else if (c.dx || c.dy) unclipFor(x);
+    }
+    if (regrouped) {
+      remeasure = true;
+      reapplyAll();
     }
     draw();
     commit();
@@ -1810,6 +2075,7 @@ export function startLayer(opts) {
     if (S.active) draw();
   }, { capture: true, passive: true });
   window.addEventListener("resize", () => {
+    remeasure = true;
     if (S.active) draw();
   });
 
@@ -1837,6 +2103,7 @@ export function startLayer(opts) {
   function resetKeys(keys) {
     const ks = keys.filter((k) => S.changes.has(k));
     if (!ks.length) return;
+    remeasure = true;
     pushUndo();
     for (const k of ks) {
       const el = elOfKey(k);
@@ -1864,6 +2131,7 @@ export function startLayer(opts) {
     pushUndo();
     c.hidden = false;
     c.at = now();
+    remeasure = true;
     reapplyAll();
     commit();
   }

@@ -37,6 +37,7 @@ export function whatOf(c) {
   const was = (v) => (Number.isFinite(v) ? Math.round(v) : "?");
   if (c.w !== undefined && c.w !== null) out.push(`width from ${c.base ? was(c.base.w) : "?"} to ${Math.round(c.w)} px`);
   if (c.h !== undefined && c.h !== null) out.push(`height from ${c.base ? was(c.base.h) : "?"} to ${Math.round(c.h)} px`);
+  if (c.detached) out.push("detached from its container");
   return out.join("; ") || "nothing recorded";
 }
 
@@ -109,6 +110,17 @@ export function layoutOf(c) {
   return s ? `layout: ${s}` : "";
 }
 
+// The box a detached element was dropped outside of. It belongs somewhere
+// else now: the parent should lose it and shrink to what remains.
+export function containerOf(c) {
+  if (!c.detached) return "";
+  const b = c.container && typeof c.container === "object" ? c.container : {};
+  const tag = typeof b.tag === "string" && /^[a-z][a-z0-9-]{0,31}$/.test(b.tag) ? `<${b.tag}>` : "its parent element";
+  let at = "";
+  if (isLoc(b.loc) && b.loc) at = ` at ${b.loc}${typeof b.path === "string" && b.path ? ` (child path ${q(b.path)})` : ""}`;
+  return `container: dragged out of ${tag}${at}; render the element outside that parent in the source, so the parent sizes to its remaining content (do not keep it inside and offset it)`;
+}
+
 // How to find the element without a source location.
 export function findOf(c) {
   const h = c.hint;
@@ -144,6 +156,8 @@ export function changeLines(c, i, opts = {}) {
   for (const w of where(c, opts)) lines.push(ind + w);
   const lay = layoutOf(c);
   if (lay) lines.push(ind + lay);
+  const box = containerOf(c);
+  if (box) lines.push(ind + box);
   const find = findOf(c);
   if (find) lines.push(ind + find);
   else if (!isLoc(c.loc) || !c.loc) lines.push(`${ind}find: tag <${tagOf(c)}>${c.text ? ` with text ${q(cut(c.text, 80))}` : ""}`);
@@ -184,6 +198,7 @@ export function pageText(doc, opts = {}) {
 
 const sig = (c) => JSON.stringify([
   !!c.hidden,
+  !!c.detached,
   Math.round(c.dx || 0),
   Math.round(c.dy || 0),
   c.w === undefined || c.w === null ? null : Math.round(c.w),

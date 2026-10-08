@@ -237,7 +237,31 @@ function checkCtx(v) {
 
 // ---------------------------------------------------------------- change
 
-const BOOL_FIELDS = ["part", "piece", "hidden", "missing", "inline", "text_multi"];
+const BOOL_FIELDS = ["part", "piece", "hidden", "missing", "inline", "text_multi", "detached"];
+
+// The box an element was dragged out of (see "detached"): its tag, and where
+// it comes from in the source (a stamp, or a child path below one).
+function checkContainer(v) {
+  if (!isPlainObject(v)) return { error: "container: must be an object" };
+  const out = {};
+  for (const k of Object.keys(v)) if (!["tag", "loc", "path"].includes(k)) return { error: `container.${k}: unknown` };
+  if (has(v, "tag")) {
+    const t = own(v, "tag");
+    if (typeof t !== "string" || !TAG_RE.test(t)) return { error: "container.tag: invalid" };
+    out.tag = t;
+  }
+  if (has(v, "loc")) {
+    const l = own(v, "loc");
+    if (!isLoc(l)) return { error: "container.loc: not a valid file:line:col" };
+    out.loc = l;
+  }
+  if (has(v, "path")) {
+    const pth = own(v, "path");
+    if (typeof pth !== "string" || !PART_PATH_RE.test(pth)) return { error: "container.path: invalid" };
+    out.path = pth;
+  }
+  return { value: out };
+}
 
 export function validateChange(c) {
   if (!isPlainObject(c)) return { ok: false, error: "change: must be an object" };
@@ -330,6 +354,11 @@ export function validateChange(c) {
     const r = checkCtx(own(c, "ctx"));
     if (r.error) return fail(r.error);
     out.ctx = r.value;
+  }
+  if (has(c, "container")) {
+    const r = checkContainer(own(c, "container"));
+    if (r.error) return fail(r.error);
+    out.container = r.value;
   }
   for (const f of ["src", "src_used"]) {
     if (!has(c, f)) continue;
@@ -504,6 +533,13 @@ export function coerceChange(c) {
   if (isPlainObject(c.ctx)) {
     const r = checkCtx(c.ctx);
     if (!r.error) out.ctx = r.value;
+  }
+  if (isPlainObject(c.container)) {
+    const box = {};
+    if (typeof c.container.tag === "string" && TAG_RE.test(c.container.tag)) box.tag = c.container.tag;
+    if (isLoc(c.container.loc)) box.loc = c.container.loc;
+    if (typeof c.container.path === "string" && PART_PATH_RE.test(c.container.path)) box.path = c.container.path;
+    out.container = box;
   }
   for (const f of ["src", "src_used"]) if (typeof c[f] === "string" && SHA_RE.test(c[f])) out[f] = c[f];
   if (typeof c.at === "string" && AT_RE.test(c.at)) out.at = c.at;

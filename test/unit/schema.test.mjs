@@ -205,3 +205,18 @@ test("coerceChange trims page data into a valid change", () => {
   assert.ok(validateChange(c).ok);
   assert.equal(coerceChange({ key: "k" }), null);
 });
+
+test("detached and its container", () => {
+  const r = validateChange(sampleChange({ dy: 80, detached: true, container: { tag: "section", loc: "src/a.jsx:3:1", path: "0.2" } }));
+  assert.ok(r.ok, r.error);
+  assert.deepEqual(r.value.container, { tag: "section", loc: "src/a.jsx:3:1", path: "0.2" });
+  assert.ok(!field({ detached: "yes" }));
+  assert.ok(!field({ container: "section" }));
+  assert.ok(!field({ container: { tag: "SECTION" } }));
+  assert.ok(!field({ container: { loc: "../a.js:1:1" } }));
+  assert.ok(!field({ container: { path: "1/2" } }));
+  assert.ok(!field({ container: { text: "words" } }));
+  const k = coerceChange(sampleChange({ detached: 1, container: { tag: "div", loc: "/etc/x:1:1", path: "0", text: "dropped" } }));
+  assert.equal(k.detached, true);
+  assert.deepEqual(k.container, { tag: "div", path: "0" });
+});

@@ -155,3 +155,25 @@ html.dftp-design * {
   background: #c2410c;
   color: #fff;
 }
+
+/* Always-visible scrollbar for the page's main scroll area. */
+.dftp-rail {
+  position: fixed;
+  box-sizing: border-box;
+  pointer-events: auto;
+  border-left: calc(1px * var(--dftp-k, 1)) solid rgba(100, 116, 139, 0.28);
+  background: rgba(100, 116, 139, 0.13);
+}
+
+.dftp-rail-thumb {
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  border-radius: 999px;
+  background: rgba(71, 85, 105, 0.6);
+}
+
+.dftp-rail-thumb:hover,
+.dftp-rail-on .dftp-rail-thumb {
+  background: rgba(234, 88, 12, 0.8);
+}

@@ -222,6 +222,8 @@ Read `CHANGES.md` first, then the JSON file when you need more detail.
     file.
   - "element absent from the page at the last save" marks a change whose
     element was not on the page: skip it and say so in your report.
+  - `container: dragged out of …` (fields `detached`, `container`): the user
+    pulled the element out of that parent box. See "Detached elements" below.
 
 Fields of one change in the JSON file (all optional except `id` and `key`):
 
@@ -247,6 +249,7 @@ Fields of one change in the JSON file (all optional except `id` and `key`):
 | `src`, `src_used` | short keyed fingerprints of the `loc` / `used_in` files at the last edit |
 | `at` | when the change was last edited (a UTC timestamp) |
 | `missing` | not on the page at the last save |
+| `detached`, `container` | the element was dropped entirely outside its parent; `container` gives that parent's `tag`, `loc` and child `path` |
 
 ## 5. Applying changes (never as fixed offsets)
 
@@ -292,6 +295,14 @@ Use `ctx` (the `layout:` line):
   `top` / `left`, and new absolute positioning. An element that is already
   absolutely positioned may have its existing anchoring values adjusted,
   scoped to the device.
+
+### Detached elements
+
+`detached` means the element no longer belongs to the parent named on the
+`container:` line; the designer showed that parent shrinking to the rest of
+its content. Move the element's markup out of that parent (into the
+surrounding element where it was dropped, or next to the parent) instead of
+offsetting it while it stays inside. Moving it back in later clears the flag.
 
 ### Sizes
 

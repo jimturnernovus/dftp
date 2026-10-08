@@ -122,3 +122,15 @@ test("unreadable files are named, never hidden", () => {
   const md = changesMd([], { ...opts, unreadable: [".dftp/changes/x__desktop.json"] });
   assert.match(md, /Unreadable change file "\.dftp\/changes\/x__desktop\.json" was left untouched\. Tell the user/);
 });
+
+test("a detached element says which container it left and how to apply that", () => {
+  const c = sampleChange({ dx: 0, dy: 120, detached: true, container: { tag: "section", loc: "src/card.jsx:12:3", path: "1.0" } });
+  assert.match(whatOf(c), /shifted 120 px down; detached from its container/);
+  const md = changesMd([doc("desktop", [c])], opts);
+  assert.match(md, /container: dragged out of <section> at src\/card\.jsx:12:3 \(child path "1\.0"\); render the element outside that parent in the source/);
+  // Without a recorded box it still says so, and a bad location is never written.
+  const bare = changesMd([doc("desktop", [sampleChange({ dy: 50, detached: true, container: { loc: "../x.js:1:1" } })])], opts);
+  assert.match(bare, /container: dragged out of its parent element; render/);
+  assert.doesNotMatch(bare, /\.\.\/x\.js/);
+  assert.doesNotMatch(changesMd([doc("desktop", [sampleChange({ dy: 50 })])], opts), /container:/);
+});

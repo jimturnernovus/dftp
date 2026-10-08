@@ -1,0 +1,12 @@
+/* Styles for scroll-shell.html; the test copies this file over demo/demo.css. */
+html, body { margin: 0; height: 100%; overflow: hidden; font: 15px/1.4 system-ui, sans-serif; }
+.app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+.top { flex: none; height: 48px; padding: 0 16px; display: flex; align-items: center; background: #e2e8f0; }
+.body { flex: 1; display: flex; overflow: hidden; }
+.side { flex: none; width: 160px; background: #f1f5f9; }
+.scroller { flex: 1; overflow-y: auto; padding: 24px; scrollbar-width: none; }
+.scroller::-webkit-scrollbar { display: none; }
+.card { width: 320px; padding: 12px; border: 1px solid #94a3b8; border-radius: 8px; overflow: hidden; background: #fff; }
+.card p { margin: 0 0 8px; }
+.filler { height: 2400px; margin-top: 24px; background: linear-gradient(#fff, #cbd5e1); }
+h1 { font-size: 18px; margin: 0; }
