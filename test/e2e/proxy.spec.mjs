@@ -315,12 +315,19 @@ test("Vite example: stamped elements, a saved drag, HMR through the proxy with t
     expect(c.src).toMatch(/^[0-9a-f]{12}$/);
     expect(fs.existsSync(path.join(viteDir, ".dftp", "CHANGES.md"))).toBe(true);
 
-    // HMR: an edit to the source reaches both pages through the proxy, and
-    // the designer keeps the change on the re-rendered heading.
-    await fsp.writeFile(appFile, original.replace("<h1>Pick a plan</h1>", "<h1>Pick your plan</h1>"));
-    await expect(h1).toHaveText("Pick your plan", { timeout: 15000 });
-    await expect(d.frame.locator("h1")).toHaveText("Pick your plan", { timeout: 15000 });
-    await expect.poll(async () => Math.round((await rectOf(d.frame, "h1")).x - start.x)).toBeGreaterThanOrEqual(25 - NEAR);
+    // HMR: an edit elsewhere in the same source file (the line under the
+    // heading, same line count) reaches both pages through the proxy, and the
+    // designer keeps the change on the heading, whose own line and words are
+    // unchanged. (Editing the heading's own words is a different case: then
+    // the change waits for review, by design.)
+    const edited = original.replace("Every name and price is invented.", "Every name and price here is invented.");
+    expect(edited).not.toBe(original);
+    await fsp.writeFile(appFile, edited);
+    await expect(page.locator("p.lead")).toContainText("price here is invented", { timeout: 15000 });
+    await expect(d.frame.locator("p.lead")).toContainText("price here is invented", { timeout: 15000 });
+    await expect(d.frame.locator("h1")).toHaveText("Pick a plan");
+    await expect.poll(async () => Math.round((await rectOf(d.frame, "h1")).x - start.x), { timeout: 15000 }).toBeGreaterThanOrEqual(25 - NEAR);
+    await expect(d.page.locator("#change-list li.is-missing")).toHaveCount(0);
     near((await rectOf(d.frame, "h1")).x - start.x, 25);
     near((await rectOf(d.frame, "h1")).y - start.y, 10);
     expect(seen.urls.every((u) => u.startsWith(t.frameOrigin) || u.startsWith(t.frameOrigin.replace("http:", "ws:")))).toBe(true);

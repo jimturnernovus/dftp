@@ -21,9 +21,19 @@ async function view(d) {
   return d.page.locator("body").getAttribute("data-current-view");
 }
 
-// A move, a resize, a hidden element, a text edit and a moved word.
+// A moved word, a move, a resize, a hidden element and a text edit. The word
+// goes first: once the heading is moved down it can sit over the subtitle with
+// some fonts, and a double-click there would land on the heading.
 async function makeChanges(d) {
+  const w = await wordRect(d.frame, ".subtitle", "number");
+  const g = await geometry(d.page);
+  const p = toWindow(g, w.x + w.w / 2, w.y + w.h / 2);
+  await d.page.mouse.dblclick(p.x, p.y);
   let n = await saves(d.page);
+  await dragFrom(d.page, g, w.x + w.w / 2, w.y + w.h / 2, 0, 24);
+  await waitSaved(d.page, n);
+
+  n = await saves(d.page);
   await clickIn(d.page, d.frame, "h1");
   await dragIn(d.page, d.frame, "h1", 40, 16);
   await waitSaved(d.page, n);
@@ -47,13 +57,6 @@ async function makeChanges(d) {
   await d.page.keyboard.press("Enter");
   await waitSaved(d.page, n);
 
-  const w = await wordRect(d.frame, ".subtitle", "number");
-  const g = await geometry(d.page);
-  const p = toWindow(g, w.x + w.w / 2, w.y + w.h / 2);
-  await d.page.mouse.dblclick(p.x, p.y);
-  n = await saves(d.page);
-  await dragFrom(d.page, g, w.x + w.w / 2, w.y + w.h / 2, 0, 24);
-  await waitSaved(d.page, n);
   expect((await listIds(d.page)).length).toBe(5);
 }
 
