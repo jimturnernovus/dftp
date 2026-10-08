@@ -96,7 +96,14 @@ test("Before removes all edits from view; After restores each one to within 0.5 
     await expect(d.page.locator("#before-note")).toBeHidden();
     await expect(d.page.locator("body")).toHaveAttribute("data-current-mode", "design");
     // The layer gets the switch as a message: wait for it, then compare all.
-    await expect.poll(async () => Math.abs((await rectOf(d.frame, "h1")).x - after.h1.x)).toBeLessThanOrEqual(0.5);
+    // Every tracked element (the split word included) may land a moment after
+    // the heading on a slow machine, so wait until all of them are back.
+    for (const s of TRACKED) expect(after[s], `${s} measured after the edits`).not.toBeNull();
+    const close = (a, b) => !!a && !!b && ["x", "y", "w", "h"].every((k) => Math.abs(a[k] - b[k]) <= 0.5);
+    await expect.poll(async () => {
+      const now = await rects(d);
+      return TRACKED.filter((s) => !close(now[s], after[s]));
+    }, { timeout: 10000 }).toEqual([]);
     const back = await rects(d);
     for (const s of TRACKED) same(back[s], after[s], s);
     expect(await d.frame.evaluate(() => getComputedStyle(document.querySelector("#export-btn")).display)).toBe("none");
