@@ -1007,12 +1007,13 @@ export function startLayer(opts) {
     const same = codeSame(c);
     const tilde = c.key.lastIndexOf(">~");
     if (tilde >= 0) {
-      const w = norm(c.text);
+      const w = norm(c.text).slice(0, 80);
       // A word piece is recognised by the word the page drew, not by what it
       // shows now: once its own text edit is drawn it reads text_to, and
       // comparing that to the recorded word made the change drop off and come
       // back on every redraw (the word flickered between the two texts).
-      const wordOf = (sp) => norm(originalText(sp));
+      // Recorded words are cut to 80 characters (textOf), so compare as much.
+      const wordOf = (sp) => norm(originalText(sp)).slice(0, 80);
       if (exact && (!w || !captureText || wordOf(exact) === w)) return exact;
       if (!w) return null;
       const ti = Number(c.key.slice(tilde + 2).split(".")[0]);
@@ -1020,7 +1021,7 @@ export function startLayer(opts) {
         const have = pieces.get(el) && pieces.get(el).get(ti);
         if (have) return have.spans.some((sp) => wordOf(sp) === w);
         const tn = directTexts(el)[ti];
-        return !!tn && norm(tn.nodeValue).split(" ").includes(w);
+        return !!tn && norm(tn.nodeValue).split(" ").some((x) => x.slice(0, 80) === w);
       };
       const anchorLoc = headLoc(c.key.slice(0, tilde));
       if (!anchorLoc || c.key.slice(0, tilde).includes(">")) return null;

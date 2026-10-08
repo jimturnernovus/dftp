@@ -391,6 +391,30 @@ test.describe("text edits settle (desktop)", () => {
     expect(doc.list.find((c) => !c.piece).text).toBe("Demo data. Every name and number is invented.");
   });
 
+  test("a word longer than 80 characters (a long address) can be split out and edited", async () => {
+    const long = "https://docs.example.test/clients/active/reports/2026/october/summary-of-every-invented-client.html";
+    await d.frame.evaluate((u) => {
+      const t = [...document.querySelector(".subtitle").childNodes].find((n) => n.nodeType === 3);
+      t.nodeValue = t.nodeValue.replace("number", u);
+    }, long);
+    const w = await wordRect(d.frame, ".subtitle", long);
+    const g = await geometry(d.page);
+    const p = toWindow(g, w.x + Math.min(w.w / 2, 40), w.y + w.h / 2);
+    await d.page.mouse.dblclick(p.x, p.y);
+    await expect(d.page.locator("#picked")).toContainText("a single word of a text");
+    await d.page.keyboard.press("e");
+    await waitEditor(() => d.frame);
+    const n = await saves(d.page);
+    await d.page.keyboard.press("ControlOrMeta+a");
+    await d.page.keyboard.type("the docs");
+    await d.page.keyboard.press("Enter");
+    await waitSaved(d.page, n);
+    const r = await steady(d.frame, ".subtitle");
+    expect(r.seen).toEqual(["Demo data. Every name and the docs is invented."]);
+    expect(r.changes).toBe(0);
+    await expect(d.page.locator("#change-list li.is-missing")).toHaveCount(0);
+  });
+
   test("a two-line word edit keeps one space after it, not the source's line break", async () => {
     const w = await wordRect(d.frame, ".subtitle", "data.");
     const g = await geometry(d.page);
