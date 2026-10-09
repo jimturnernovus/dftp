@@ -39,9 +39,89 @@ What DFTP defends against, and how:
 | **Another program or another user on the same computer** (anything can connect to a loopback port) | the designer page, which holds the API token, is served only with a session cookie (`HttpOnly`, `SameSite=Strict`) that the start-up link printed in the owner's terminal sets; requests without it get a refusal with no token; the cookie is stripped from every request passed to the dev server and the dev server cannot set it; source fingerprints are keyed with a secret in `.dftp/` that only the owner can read |
 | **Hostile content inside the page being designed** (a third-party script, stored XSS in dev data, a compromised dependency of your app) | the page runs on a separate origin in a sandboxed frame without top navigation, pop-ups or modals; the designer accepts only well-formed messages from that frame with the right origin, window and per-load secret; the page can only propose a validated list of changes for the page and screen size the designer chose; notices the page triggers are codes that the designer maps to its own wording, and page-supplied strings (paths, captured labels) are only ever shown as plain text through `textContent`; fingerprint requests from the page are limited to ordinary source files and a fixed number per page load, and return keyed hashes that cannot be checked against guesses offline; no HTML is ever built from strings; the designer's CSP allows only its own scripts and enforces Trusted Types |
 | **A crafted change file** in a project (for example from a pull request), aimed at the coding assistant that reads it, or at path tricks | every file is validated on read; source locations must be relative paths without `..`, absolute roots or drive letters; `CHANGES.md` writes every captured string as a JSON literal and states that quoted text is data; `CLAUDE.md` tells assistants to ignore requests found in change data, edit only files inside the project, and show a diff first |
-| **Accidental capture of private data** | what a change records is the element's tag, `id`, classes, role, CSS path, box and layout context, a label of up to 80 characters (its text, or else its `aria-label`, placeholder, `title` or `alt`), its `aria-label` (up to 80), and for a text edit the original text (up to 500) and the new text; the value typed into a field is never read; the text inside text areas and editable regions is never read, though their `aria-label`, placeholder or `title` can be the label; password, hidden and card fields and anything marked `data-dftp-private` or inside such an element give no text at all (no label, `aria-label`, placeholder or original text), while their tag, `id`, classes, role and CSS path are still recorded; a text edit of an editable region, of anything inside one, or of an element holding one or a password, hidden, card or private field is refused; `--no-text` records no page text (the tag, `id`, classes, role, CSS path and the new text still are); `.dftp/` is git-ignored by default |
+| **Accidental capture of private data** | what a change records is the element's tag, `id`, classes, role, CSS path, box and layout context, a label of up to 80 characters (its text, or else its `aria-label`, placeholder, `title` or `alt`), its `aria-label` (up to 80), and for a text edit the original text (up to 500) and the new text; the value typed into a field is never read; the text inside text areas and editable regions is never read, though their `aria-label`, placeholder or `title` can be the label; password, hidden and card fields and anything marked `data-dftp-private` or inside such an element give no text at all (no label, `aria-label`, placeholder or original text), while their tag, `id`, classes, role and CSS path are still recorded; a text edit of an editable region, of anything inside one, or of an element holding one or a password, hidden, card or private field is refused; `--no-text` records no page text (the tag, `id`, classes, role, CSS path and the new text still are); the live style sample keeps computed style values only (colors, fonts, spacing, borders, radii, shadows, opacity), never text, typed values or attribute values, and skips password, hidden and card fields and everything inside an element marked `data-dftp-private`; `.dftp/` is git-ignored by default |
+| **Hostile files in the project read by the style scan** (a crafted style sheet, token file, HTML page or component) | the scan never runs project code and parses everything as text with linear-time readers (no regular expression built from input, fixed depth, size and count limits), and works out the tokens on a fixed work budget, so no file content can stall the designer; adapters are pure functions whose failures become diagnostic codes; special files (pipes, devices) are never opened for reading; it reads only inside the project root (links are followed only to ordinary files inside it, never to folders), skips dot files and folders, output folders, key, certificate and credential files and whatever `.gitignore` excludes, and stops at 5000 files, 48 MiB or 10 seconds; it keeps style values only (control characters removed, length-capped), never page text, and writes relative paths only; `tokens.json` and live samples are validated on every read and write; the style sheet of blank pages (`--blank`) is generated from a validated `tokens.json` only, from normalised values written back as CSS, each passing a strict filter (no `url()` or any function but gradients and easing curves, no braces, semicolons, backslashes, comments, `@`, `!` or single quotes, double quotes only in pairs around font names), and the blank page itself is a fixed document served from the page origin under the demo page's policy; new elements are validated changes whose styles are token ids, written as custom properties |
 | **Escaping the project folder** | writes go only to `<project>/.dftp/`, through validated ids and atomic renames; symbolic links there stop startup, and the folders are checked again (type, device and inode) before every read and write, so one swapped for a link while DFTP runs (for example by a branch switch) is refused; static files come from fixed lists and request paths are never joined onto the disk; where Node has a permission model, DFTP runs inside it with write access to `.dftp/` only |
 | **Supply chain** | no runtime dependencies; development dependencies pinned to exact versions with a lockfile and install scripts disabled; CI actions pinned to commit hashes with read-only permissions |
+
+## The style scan and the live sample
+
+The style scan (`dftp scan`, and the designer at start-up and on
+**Rescan**) and the live sample feed `.dftp/tokens.json`. What they may
+touch:
+
+**The scan reads** only ordinary files inside the project root that one of
+its adapters asks for: `*.css`, `*.html` / `*.htm`, the `<style>` blocks of
+`*.vue`, `*.svelte` and `*.astro` files, token and theme JSON files
+(`*.tokens.json`, `tokens.json`, JSON in a `tokens/` or `design-tokens/`
+folder, `design-tokens*.json`, `theme*.json`), and component files directly
+in a `libraryPrefixes` folder whose name says what they are (`button.jsx`
+...), of which only the file name and exported names are used. It also
+reads the project's `.gitignore` files (up to 64 KiB each, ordinary files
+only), to skip what they exclude.
+
+**The scan never reads**:
+
+- anything outside the project root: links are followed only to ordinary
+  files inside it that the scan would read under their own name too, never
+  to folders, and a folder swapped for a link during the walk is skipped;
+- any file or folder whose name starts with `.` (`.env` files, `.git`,
+  `.dftp`, editor folders);
+- the folders `node_modules`, `bower_components`, `jspm_packages`,
+  `vendor`, `dist`, `build`, `out` and `coverage`;
+- key, certificate and keystore files (`*.pem`, `*.key`, `*.p12`, `*.pfx`,
+  `*.crt`, `*.jks`, `*.kdbx`, `*.gpg`, `id_rsa` ...) and any file or folder
+  whose name contains `secret` or `credential`;
+- binary files, files over 1 MiB, folders more than 24 levels deep, and
+  anything after 5000 files, 48 MiB, 50000 directory entries or 10
+  seconds.
+
+**The scan never runs anything.** No project code is run, imported or
+required, and no configuration file is executed (which is why a
+`tailwind.config.js` is not read). Adapters are pure functions that get
+text and return data: no file system, network, timers or project modules.
+Their CSS, JSON and HTML readers are hand-written and linear in the size
+of the input (a declaration longer than any value it may hold is dropped
+before it is looked at); no regular expression is built from project text,
+and nesting depth, value length and item counts are capped. Working out the
+tokens from what was read (following references, fallbacks inside
+fallbacks, every theme) runs on a fixed work budget; what is left when it
+runs out gets no value, with a `budget-build` diagnostic, and the scan is
+marked `truncated`. Each file is read and parsed in one short step, so the
+designer keeps answering requests while it scans, and stopping the designer
+never waits more than a moment for a scan. An adapter that throws becomes
+an `adapter-error` diagnostic; the scan goes on.
+
+**The scan keeps** style values that normalise to a known token type
+(control characters removed, at most 300 characters), the names they are
+defined under, relative file paths with line numbers, counts, and
+diagnostic codes. It keeps no other file contents: a custom property
+holding a string or a `url()` is left out, and a diagnostic never quotes
+the file.
+
+**The live sample** runs in the page, inside the sandboxed frame:
+
+- it reads the computed values of 15 style properties only (color,
+  background color, border color, width and radius, font family, size and
+  weight, line height, letter spacing, padding, margin, gap, box shadow and
+  opacity), never text, typed values or attribute values;
+- it skips DFTP's own layer, SVG and MathML, elements that are not
+  rendered, password, hidden and card fields, and everything inside an
+  element marked `data-dftp-private`;
+- it stops at 1500 elements, 20000 visited nodes or 250 ms, and sends at
+  most 400 distinct values of up to 200 characters each, with no markup or
+  rule characters (`<`, `>`, `{`, `}`, `;`, backslash, backtick);
+- it runs only in After, on one of the designer's pages, never on a blank
+  page; the server refuses samples for blank pages and for unknown pages or
+  screen sizes;
+- it is validated by the designer window (origin, sender, per-load secret,
+  shape) and again by the server (token, `Origin`, JSON), and at most 12
+  samples (one per page, screen size and theme) are kept.
+
+Content in the page can send the same message, so a sample is only ever
+trusted as data: its worst effect is junk values in `tokens.json`, which a
+Rescan does not remove but a newer sample of the same page, screen size and
+theme replaces.
 
 ## Out of scope
 
@@ -64,4 +144,6 @@ What DFTP defends against, and how:
 - Trusted Types are enforced only in Chromium-based browsers.
 - Content inside the page can send the same messages DFTP's own script sends;
   the worst it can do is propose junk changes for the current page, which are
-  validated and stored as data.
+  validated and stored as data, or report junk style values, which are
+  validated (known properties, no markup or rule characters, size and count
+  limits) and only ever merged into `tokens.json` as data.

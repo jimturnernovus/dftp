@@ -37,6 +37,7 @@ export const LIMITS = Object.freeze({
   ctxCount: 10000,
   ctxGap: 10000,
   ctxCols: 1000,
+  inserts: 300,
 });
 
 // Page and device ids: lower-case slug, and never a name Windows reserves for
@@ -235,6 +236,88 @@ function checkCtx(v) {
   return { value: out };
 }
 
+// ---------------------------------------------------------------- new elements (blank pages)
+
+// A change of kind "insert" adds an element that is not in the code yet, on
+// a blank page (see blank.js). Its key is "ins:" followed by its own id.
+//   element          one of INSERT_ELEMENTS
+//   parent           SCAFFOLD_KEY (the blank page's main container) or the
+//                    key of another insert that is a box (INSERT_BOXES)
+//   index            its place among the parent's new elements, from 0
+//   styles           {property: token id}, properties from INSERT_STYLE_PROPS
+//   component        the project's own component for it, when the style scan
+//   component_file   found one (an export name and the file it is in)
+// Moves, sizes, hiding and text edits may follow, as on any change. Source
+// location fields (loc, used_in, part, ...) never apply to an insert.
+export const INSERT_ELEMENTS = Object.freeze(["heading", "text", "button", "input", "card", "image", "divider", "section", "grid"]);
+export const INSERT_BOXES = Object.freeze(["card", "section", "grid"]);
+export const INSERT_STYLE_PROPS = Object.freeze([
+  "background", "color", "border-color", "border-width", "border-radius", "box-shadow", "font-family", "font-size",
+  "font-weight", "line-height", "letter-spacing", "padding-block", "padding-inline", "gap",
+]);
+export const SCAFFOLD_KEY = "scaffold";
+const INSERT_KEY_RE = /^ins:[a-z0-9]{8}$/;
+// A style token id (tokens.js uses this rule too): dotted segments, as in
+// "color.brand.600".
+const TOKEN_REF_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}(?:\.[A-Za-z0-9_-]{1,64}){1,11}$/;
+const COMPONENT_RE = /^[A-Z][A-Za-z0-9_]{0,63}$/;
+const INSERT_FIELDS = ["element", "parent", "index", "styles", "component", "component_file"];
+const NOT_ON_INSERTS = ["used_in", "was_loc", "occ", "part", "piece", "path", "src", "src_used"];
+
+export function isInsertKey(s) {
+  return typeof s === "string" && INSERT_KEY_RE.test(s);
+}
+
+export function isTokenRef(s) {
+  return typeof s === "string" && s.length <= 160 && TOKEN_REF_RE.test(s);
+}
+
+export function isComponentName(s) {
+  return typeof s === "string" && COMPONENT_RE.test(s);
+}
+
+// {property: token id} -> {value} (a fresh copy) or {error}.
+export function checkInsertStyles(v) {
+  if (!isPlainObject(v)) return { error: "styles: must be an object" };
+  const out = {};
+  for (const k of Object.keys(v)) {
+    if (!INSERT_STYLE_PROPS.includes(k)) return { error: `styles.${k.slice(0, 40)}: unknown property` };
+    if (!isTokenRef(v[k])) return { error: `styles.${k}: must be a token id` };
+    out[k] = v[k];
+  }
+  return { value: out };
+}
+
+// The insert fields of change c, checked into out. Returns an error or null.
+function checkInsert(c, out) {
+  if (own(c, "kind") !== "insert") return "kind: unknown";
+  if (out.key !== `ins:${out.id}`) return "key: an insert's key is \"ins:\" and its id";
+  for (const f of NOT_ON_INSERTS) if (has(c, f)) return `${f}: not allowed on an insert`;
+  if (has(c, "loc") && own(c, "loc") !== "") return "loc: not allowed on an insert";
+  const element = own(c, "element");
+  if (!INSERT_ELEMENTS.includes(element)) return "element: unknown";
+  const parent = own(c, "parent");
+  if (!(parent === SCAFFOLD_KEY || isInsertKey(parent)) || parent === out.key) return "parent: invalid";
+  const index = own(c, "index");
+  if (!isInt(index, 0, LIMITS.inserts)) return "index: must be an integer 0-300";
+  const st = checkInsertStyles(own(c, "styles"));
+  if (st.error) return st.error;
+  out.kind = "insert";
+  out.element = element;
+  out.parent = parent;
+  out.index = index;
+  out.styles = st.value;
+  if (has(c, "component")) {
+    if (!isComponentName(own(c, "component"))) return "component: invalid";
+    out.component = own(c, "component");
+  }
+  if (has(c, "component_file")) {
+    if (!out.component || !isFilePath(own(c, "component_file"))) return "component_file: invalid";
+    out.component_file = own(c, "component_file");
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------- change
 
 const BOOL_FIELDS = ["part", "piece", "hidden", "missing", "inline", "text_multi", "detached"];
@@ -274,6 +357,13 @@ export function validateChange(c) {
   const key = own(c, "key");
   if (!isKey(key)) return fail("key: must be 1-512 printable ASCII characters");
   out.key = key;
+  if (has(c, "kind")) {
+    const e = checkInsert(c, out);
+    if (e) return fail(e);
+  } else {
+    if (key === SCAFFOLD_KEY || key.startsWith("ins:")) return fail("key: kept for new elements");
+    for (const f of INSERT_FIELDS) if (has(c, f)) return fail(`${f}: only on an insert`);
+  }
 
   for (const f of ["loc", "used_in", "was_loc"]) {
     if (!has(c, f)) continue;
@@ -371,6 +461,13 @@ export function validateChange(c) {
     if (typeof v !== "string" || !AT_RE.test(v)) return fail("at: must be a timestamp");
     out.at = v;
   }
+  // A new element is never detached from its box: one dragged out of it
+  // moves into the box it was dropped in (parent and index). A flag left in
+  // a file from before that is dropped, not described.
+  if (out.kind === "insert") {
+    delete out.detached;
+    delete out.container;
+  }
   return { ok: true, value: out };
 }
 
@@ -380,11 +477,13 @@ export function validateList(list) {
   const out = [];
   const ids = new Set();
   const keys = new Set();
+  let inserts = 0;
   for (let i = 0; i < list.length; i++) {
     const r = validateChange(list[i]);
     if (!r.ok) return { ok: false, error: `list[${i}].${r.error}` };
     if (ids.has(r.value.id)) return { ok: false, error: `list[${i}].id: duplicate` };
     if (keys.has(r.value.key)) return { ok: false, error: `list[${i}].key: duplicate` };
+    if (r.value.kind === "insert" && ++inserts > LIMITS.inserts) return { ok: false, error: `list: more than ${LIMITS.inserts} new elements` };
     ids.add(r.value.id);
     keys.add(r.value.key);
     out.push(r.value);
@@ -543,6 +642,23 @@ export function coerceChange(c) {
   }
   for (const f of ["src", "src_used"]) if (typeof c[f] === "string" && SHA_RE.test(c[f])) out[f] = c[f];
   if (typeof c.at === "string" && AT_RE.test(c.at)) out.at = c.at;
+  if (c.kind === "insert") coerceInsert(c, out);
   const r = validateChange(out);
   return r.ok ? r.value : null;
+}
+
+// The insert fields of c that fit, and none of the location fields.
+function coerceInsert(c, out) {
+  out.kind = "insert";
+  for (const f of ["loc", ...NOT_ON_INSERTS]) delete out[f];
+  for (const f of ["element", "parent"]) if (typeof c[f] === "string") out[f] = c[f];
+  if (Number.isInteger(c.index)) out.index = clamp(c.index, 0, LIMITS.inserts);
+  out.styles = {};
+  if (isPlainObject(c.styles)) {
+    for (const k of INSERT_STYLE_PROPS) if (isTokenRef(own(c.styles, k))) out.styles[k] = c.styles[k];
+  }
+  if (isComponentName(c.component)) {
+    out.component = c.component;
+    if (isFilePath(c.component_file)) out.component_file = c.component_file;
+  }
 }

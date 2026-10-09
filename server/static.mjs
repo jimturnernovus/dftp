@@ -18,6 +18,11 @@ export const SHELL_FILES = Object.freeze([
   ["/core/schema.js", "client/core/schema.js"],
   ["/core/protocol.js", "client/core/protocol.js"],
   ["/core/devices.js", "client/core/devices.js"],
+  ["/core/tokens.js", "client/core/tokens.js"],
+  ["/core/css-values.js", "client/core/css-values.js"],
+  ["/core/styles-panel.js", "client/core/styles-panel.js"],
+  ["/core/blank.js", "client/core/blank.js"],
+  ["/core/palette.js", "client/core/palette.js"],
 ]);
 
 // The shell page itself; served at "/" with the token filled in.
@@ -35,6 +40,8 @@ export const LAYER_FILES = Object.freeze([
   ["/__dftp/core/schema.js", "client/core/schema.js"],
   ["/__dftp/core/protocol.js", "client/core/protocol.js"],
   ["/__dftp/core/devices.js", "client/core/devices.js"],
+  ["/__dftp/core/tokens.js", "client/core/tokens.js"],
+  ["/__dftp/core/blank.js", "client/core/blank.js"],
 ]);
 
 // Demo page files, relative to the project root used in demo mode.

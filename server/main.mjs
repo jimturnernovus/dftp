@@ -11,6 +11,7 @@ import { createShellApp } from "./shell-app.mjs";
 import { createFrameApp, createFrameUpgrade } from "./frame-app.mjs";
 import { createProxy } from "./proxy.mjs";
 import { requestLogger, sessionCookieName } from "./guard.mjs";
+import { createTokens } from "./tokens.mjs";
 
 export const PAIR_TRIES = 20;
 export const LIMITS = Object.freeze({ headersTimeout: 10000, requestTimeout: 30000, keepAliveTimeout: 5000, maxConnections: 64, maxHeaderSize: 16384 });
@@ -98,7 +99,10 @@ const ONE_TIME_MS = 2 * 60 * 1000;
 // cfg: frozen settings from config.mjs. opts.log: (line) => void for request
 // lines (only used when cfg.debug). opts.token: fixed token (tests only).
 // Returns {shellOrigin, frameOrigin, shellPort, framePort, token, link,
-// openLink(), sessionCookie, store, servers, close()}.
+// openLink(), sessionCookie, store, tokens, servers, close()}.
+//
+// The style scan starts in the background once both listeners are up
+// (opts.scan: false leaves it to the first request).
 //
 // link: the address to print. Its key works for as long as the server runs,
 // so the same link opens the designer again after a browser restart.
@@ -162,6 +166,7 @@ export async function startServers(cfg, opts = {}) {
     },
   };
   ctx.proxy = createProxy({ cfg, shellOrigin, frameOrigin, framePort, layerScript: ctx.layerScript, sessionCookie: ctx.session.cookieName });
+  ctx.tokens = createTokens({ cfg, store });
 
   const shellHandler = createShellApp(ctx);
   const frameHandler = createFrameApp(ctx);
@@ -169,6 +174,7 @@ export async function startServers(cfg, opts = {}) {
   frame.on("request", frameHandler);
   shell.on("upgrade", (req, socket) => socket.destroy());
   frame.on("upgrade", createFrameUpgrade(ctx));
+  if (opts.scan !== false) ctx.tokens.start();
 
   let closing = null;
   return {
@@ -187,12 +193,13 @@ export async function startServers(cfg, opts = {}) {
     },
     sessionCookie: `${ctx.session.cookieName}=${cookieValue}`,
     store,
+    tokens: ctx.tokens,
     servers: { shell, frame },
     close() {
       if (!closing) {
         closing = (async () => {
           ctx.proxy.close();
-          await Promise.all([closeServer(shell), closeServer(frame)]);
+          await Promise.all([closeServer(shell), closeServer(frame), ctx.tokens.close()]);
         })();
       }
       return closing;

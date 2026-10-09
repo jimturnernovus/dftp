@@ -1,9 +1,12 @@
 // Requests to the FRAME listener (http://127.0.0.1:P+1). It has no write API.
 //
 //   /__dftp/overlay.js   boot module generated at startup (settings baked in)
+//   /__dftp/blank/<id>   a blank page (--blank), and /__dftp/tokens.css its
+//                        style sheet from the style scan (blank.mjs)
 //   /__dftp/...          fixed static list (static.mjs LAYER_FILES); never proxied
 //   demo mode:  /  the demo page, stamped with source locations; /demo.css, /demo.js
 //   proxy mode: everything else goes to proxy.mjs
+//   blank mode: nothing else (there is no dev server)
 //
 // A request marked "Service-Worker: script" is refused in both modes, so no
 // page can install a worker over this shared origin.
@@ -12,6 +15,9 @@ import path from "node:path";
 import { splitTarget, hostMatches, send, sendFrameError, headers, TYPES } from "./guard.mjs";
 import { LAYER_PREFIX, DEMO_PAGE, readRegularFile } from "./static.mjs";
 import { stampHtml } from "./demo-stamp.mjs";
+import { blankPageHtml, tokenStylesheet, TOKENS_CSS } from "./blank.mjs";
+
+const CSS_WAIT_MS = 4000;
 
 // The settings the layer may know, as a JSON literal that is safe inside a
 // script: "<", U+2028 and U+2029 are escaped.
@@ -50,6 +56,34 @@ export function bootModuleSource(ctx) {
 export function createFrameApp(ctx) {
   const bootSource = Buffer.from(bootModuleSource(ctx));
   const demoFile = path.join(ctx.cfg.root, DEMO_PAGE);
+  const blankPages = new Map(ctx.cfg.pages.filter((p) => p.blank === true).map((p) => [p.path, p]));
+
+  // A blank page, or the style sheet blank pages load. False when the path
+  // is neither (or there are no blank pages).
+  async function blank(req, res, target) {
+    if (!blankPages.size) return false;
+    if (target.pathname === TOKENS_CSS) {
+      // A first scan that is still running is waited for briefly; past that
+      // the page gets the plain look, and Reload or Rescan (which has the
+      // page load this sheet again) brings the tokens in.
+      let timer = null;
+      const got = ctx.tokens
+        ? await Promise.race([
+          ctx.tokens.get().catch(() => null),
+          new Promise((r) => {
+            timer = setTimeout(() => r(null), CSS_WAIT_MS);
+          }),
+        ])
+        : null;
+      clearTimeout(timer);
+      send(req, res, 200, tokenStylesheet(got ? got.doc : null, { theme: ctx.cfg.theme }), headers.layerAsset(TYPES.css));
+      return true;
+    }
+    const page = blankPages.get(target.pathname);
+    if (!page) return false;
+    send(req, res, 200, blankPageHtml({ id: page.id, scriptSrc: ctx.layerScript }), headers.frameDocument(ctx.shellOrigin));
+    return true;
+  }
 
   async function serveFile(req, res, entry, hdrs) {
     let buf;
@@ -71,6 +105,7 @@ export function createFrameApp(ctx) {
       send(req, res, 200, bootSource, headers.layerAsset(TYPES.js));
       return;
     }
+    if (await blank(req, res, target)) return;
     const entry = ctx.layerStatic.get(target.pathname);
     if (!entry) {
       sendFrameError(req, res, 404, ctx.shellOrigin);
@@ -130,6 +165,10 @@ export function createFrameApp(ctx) {
       }
       if (ctx.cfg.mode === "demo") {
         await demo(req, res, target);
+        return;
+      }
+      if (ctx.cfg.mode === "blank") {
+        sendFrameError(req, res, 404, ctx.shellOrigin);
         return;
       }
       await ctx.proxy.handle(req, res, target);

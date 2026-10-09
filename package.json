@@ -1,6 +1,6 @@
 {
   "name": "dftp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DFTP (Designer for the Page): a drag-and-drop layout designer for almost any web page",
   "type": "module",
   "license": "MIT",

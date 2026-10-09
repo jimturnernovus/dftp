@@ -79,6 +79,7 @@
         <button type="button" id="nolayer-retry" class="cta">Reload</button>
       </div>
     </div>
+    <div class="palette-bar" id="palette-bar" role="toolbar" aria-label="Elements to add to the blank page" hidden></div>
     <p class="boot-error" id="boot-error" role="alert" hidden></p>
     <section class="canvas" id="canvas" data-loaded="0" aria-label="Page preview">
       <div class="viewport-box" id="viewport-box">
@@ -87,6 +88,10 @@
     </section>
   </div>
   <aside class="side-panel" id="side-panel" aria-label="Current pick and recorded edits">
+    <div class="side-tabs" id="side-tabs" role="tablist" aria-label="Side panel views">
+      <button type="button" role="tab" id="side-tab-changes" data-side-tab="changes" aria-controls="picked change-list" aria-selected="true">Changes</button>
+      <button type="button" role="tab" id="side-tab-styles" data-side-tab="styles" aria-controls="styles-panel" aria-selected="false" title="The project's colors, type, spacing, radii and shadows, as the style scan and the page found them">Styles</button>
+    </div>
     <section class="panel-sec">
       <div class="panel-sec-head">
         <h2>Selected</h2>
@@ -106,6 +111,18 @@
       </div>
       <p class="status-line fine" id="save-status" aria-live="polite"></p>
       <p class="soft fine">Your assistant reads <code id="md-path">.dftp/CHANGES.md</code> in the project folder.</p>
+    </section>
+    <section class="panel-sec fill styles-sec" id="styles-panel" role="tabpanel" aria-labelledby="side-tab-styles" hidden>
+      <div class="panel-sec-head">
+        <h2>Styles</h2>
+        <div class="row-btns">
+          <button type="button" class="tiny-btn" id="styles-rescan" title="Read the project's style files again and count the page's styles again">Rescan</button>
+          <button type="button" class="icon-btn" id="styles-close" aria-label="Hide this panel" title="Hide this panel (key: \)">×</button>
+        </div>
+      </div>
+      <p class="status-line fine" id="styles-status" aria-live="polite"></p>
+      <div class="tk-body" id="styles-body"></div>
+      <p class="soft fine">Your assistant reads these from <code>.dftp/tokens.json</code>.</p>
     </section>
   </aside>
 </main>

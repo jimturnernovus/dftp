@@ -16,7 +16,7 @@ export const TARGET = "skills/dftp/SKILL.md";
 const FRONT = [
   "---",
   "name: dftp",
-  "description: Set up DFTP (Designer for the Page) in a web project, and apply the layout and text changes recorded in .dftp/CHANGES.md as real code. Use when the user asks to integrate, start or troubleshoot DFTP, or to apply, review or finish DFTP layout changes.",
+  "description: Set up DFTP (Designer for the Page) in a web project, and apply the layout and text changes recorded in .dftp/CHANGES.md as real code, including new pages laid out on a DFTP blank page, written with the project's own style tokens (.dftp/tokens.json) and components. Use when the user asks to integrate, start or troubleshoot DFTP, to apply, review or finish DFTP layout changes, or to build a page from DFTP blank-page changes.",
   "---",
   "",
   "<!-- Generated from CLAUDE.md by scripts/build-skill.mjs. Edit CLAUDE.md, then run that script. -->",

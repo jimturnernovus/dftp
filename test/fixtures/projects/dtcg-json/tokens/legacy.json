@@ -1,0 +1,12 @@
+{
+  "size": {
+    "font": {
+      "small": { "value": "12px", "type": "fontSize" },
+      "base": { "value": "16px", "type": "fontSize", "comment": "Body text" }
+    }
+  },
+  "color": {
+    "accent": { "value": "#0e7490", "type": "color" },
+    "link": { "value": "{color.accent.value}", "type": "color" }
+  }
+}

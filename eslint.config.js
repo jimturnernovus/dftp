@@ -72,12 +72,12 @@ export default [
   },
   {
     files: ["client/**", "layer/**", "demo/**"],
-    ignores: ["client/core/schema.js", "client/core/protocol.js", "client/core/devices.js", "client/core/spec.js"],
+    ignores: ["client/core/schema.js", "client/core/protocol.js", "client/core/devices.js", "client/core/spec.js", "client/core/tokens.js", "client/core/css-values.js", "client/core/blank.js"],
     languageOptions: { globals: { ...globals.browser } },
   },
   {
     // Shared modules run in the browser and in Node: standard JavaScript only.
-    files: ["client/core/schema.js", "client/core/protocol.js", "client/core/devices.js", "client/core/spec.js"],
+    files: ["client/core/schema.js", "client/core/protocol.js", "client/core/devices.js", "client/core/spec.js", "client/core/tokens.js", "client/core/css-values.js", "client/core/blank.js"],
     languageOptions: {
       globals: { URLSearchParams: "readonly", crypto: "readonly", globalThis: "readonly" },
     },

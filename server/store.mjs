@@ -6,6 +6,7 @@
 //   .lock                            held while writing (server and CLI)
 //   .gitignore                       "*" so nothing here is committed by default
 //   fingerprint.key                  secret for source fingerprints (owner-only)
+//   tokens.json                      the style scan's result (see client/core/tokens.js)
 //
 // File names are built only from validated ids. Writes go to a fresh
 // temporary file that is then renamed into place. A file that cannot be read
@@ -21,6 +22,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { FORMAT_ID, FORMAT_VERSION, isId, isChangeId, safeParse, validateDoc } from "../client/core/schema.js";
+import { validateTokensDoc } from "../client/core/tokens.js";
 import { changesMd } from "../client/core/spec.js";
 import { filesOf, createFingerprinter } from "./fingerprint.mjs";
 
@@ -32,11 +34,12 @@ const DOC_LIMIT = 8 * 1024 * 1024;
 const DOC_NAME_RE = /^([a-z0-9][a-z0-9-]{0,47})__([a-z0-9][a-z0-9-]{0,47})\.json$/;
 const NOFOLLOW = fs.constants.O_NOFOLLOW || 0;
 export const KEY_FILE = "fingerprint.key";
+export const TOKENS_FILE = "tokens.json";
 const KEY_RE = /^[0-9a-f]{64}$/;
 const DIR_KEYS = ["dir", "changes", "history"];
 
 export class StoreError extends Error {
-  // code: "unsafe" (refuse to start), "unreadable", "busy", "bad-id"
+  // code: "unsafe" (refuse to start), "unreadable", "busy", "bad-id", "invalid"
   constructor(code, message) {
     super(message || code);
     this.code = code;
@@ -76,6 +79,7 @@ export async function prepareDirs(rootIn, { create = true } = {}) {
     lock: path.join(root, DATA_DIR, ".lock"),
     gitignore: path.join(root, DATA_DIR, ".gitignore"),
     key: path.join(root, DATA_DIR, KEY_FILE),
+    tokens: path.join(root, DATA_DIR, TOKENS_FILE),
   };
   let exists = true;
   const ids = {};
@@ -98,7 +102,7 @@ export async function prepareDirs(rootIn, { create = true } = {}) {
     if ((await fsp.realpath(abs[key])) !== abs[key]) throw new StoreError("unsafe", `${rel[key]} resolves outside the project`);
     ids[key] = { dev: st.dev, ino: st.ino };
   }
-  for (const key of ["md", "lock", "gitignore", "key"]) {
+  for (const key of ["md", "lock", "gitignore", "key", "tokens"]) {
     const st = await lstatOrNull(abs[key]);
     if (st && (st.isSymbolicLink() || !st.isFile())) {
       throw new StoreError("unsafe", `${DATA_DIR}/${path.basename(abs[key])} is not a regular file`);
@@ -231,12 +235,13 @@ function parseDoc(text, page, device) {
 const docText = (doc) => `${JSON.stringify(doc, null, 2)}\n`;
 
 // opts: {root, pages:[{id,label,path,keep}], devices:[{id,label,width,height}],
-//        libraryPrefixes, version, fingerprint, create, now}
+//        libraryPrefixes, version, fingerprint, noFingerprint, create, now}
 // Without opts.fingerprint the store makes its own from the project's key
 // (store.fingerprint); the server uses that one for /api/code as well.
+// noFingerprint: no key is made (a command that only writes tokens.json).
 export async function openStore(opts) {
   const dirs = await prepareDirs(opts.root, { create: opts.create !== false });
-  if (!opts.fingerprint && dirs.exists) {
+  if (!opts.fingerprint && !opts.noFingerprint && dirs.exists) {
     opts = { ...opts, fingerprint: createFingerprinter(dirs.root, { key: await loadFingerprintKey(dirs) }) };
   }
   const pages = opts.pages || [];
@@ -354,11 +359,49 @@ export async function openStore(opts) {
     return { docs, unreadable };
   }
 
+  // The tokens document on disk, or null when there is none or it does not
+  // pass validation.
+  async function loadTokens() {
+    try {
+      const text = await readText(dirs.tokens);
+      if (text === null) return null;
+      const r = validateTokensDoc(safeParse(text));
+      return r.ok ? r.value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Where each token is defined, for the styles of new elements in
+  // CHANGES.md: {id: [{name, file, line}]} from tokens.json, or undefined
+  // when no change file holds a new element or there is no valid scan.
+  async function tokenSources(docs) {
+    if (!docs.some((d) => d.list.some((c) => c.kind === "insert"))) return undefined;
+    const doc = await loadTokens();
+    if (!doc) return undefined;
+    const out = Object.create(null);
+    for (const t of doc.tokens) {
+      // Each name once (a variable defined for light and dark is one name),
+      // at most three.
+      const list = [];
+      for (const s of t.sources) {
+        if (!s.name && !s.file) continue;
+        if (s.name && list.some((x) => x.name === s.name)) continue;
+        list.push({ name: s.name || "", file: s.file || "", line: s.line });
+        if (list.length === 3) break;
+      }
+      if (list.length) out[t.id] = list;
+    }
+    return out;
+  }
+
   async function buildMd() {
     const { docs, unreadable } = await readAll();
     const files = filesOf(docs.flatMap((d) => d.list));
     const code = opts.fingerprint ? await opts.fingerprint.hashMany(files) : undefined;
+    const tokens = await tokenSources(docs);
     return changesMd(docs, {
+      tokens,
       notes: [
         `Rewritten on every save by DFTP (Designer for the Page) ${version} at ${stamp(now())}. Do not edit by hand.`,
         "How to apply them: see CLAUDE.md in the DFTP folder, \"Applying changes\". Paths are relative to the project root.",
@@ -376,7 +419,7 @@ export async function openStore(opts) {
   }
 
   return {
-    paths: Object.freeze({ dir: DATA_DIR, changes: `${DATA_DIR}/changes`, history: `${DATA_DIR}/history`, md: `${DATA_DIR}/CHANGES.md` }),
+    paths: Object.freeze({ dir: DATA_DIR, changes: `${DATA_DIR}/changes`, history: `${DATA_DIR}/history`, md: `${DATA_DIR}/CHANGES.md`, tokens: `${DATA_DIR}/${TOKENS_FILE}` }),
     abs: dirs,
     verify,
     fingerprint: opts.fingerprint || null,
@@ -385,6 +428,22 @@ export async function openStore(opts) {
     readAll,
     buildMd,
     rebuildMd: () => withLock(rebuildMd),
+
+    // The last tokens document, or null when there is none or it does not
+    // pass validation (a scan then writes a new one).
+    async readTokens() {
+      await verify();
+      return loadTokens();
+    },
+
+    // Write a tokens document; only a document that passes validation is
+    // written, and what is written is the validated copy.
+    async writeTokens(doc) {
+      const r = validateTokensDoc(doc);
+      if (!r.ok) throw new StoreError("invalid", `tokens: ${r.error}`);
+      await withLock(() => write(dirs.tokens, `${JSON.stringify(r.value, null, 2)}\n`));
+      return r.value;
+    },
 
     // The current document for a page and device, or null when none is saved.
     async read(page, device) {

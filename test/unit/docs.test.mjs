@@ -45,7 +45,7 @@ test("every command-line flag is in the README, and the ones a project needs are
   for (const f of ["--root", "--target", "--open", "--port", "--page", "--no-text", "--debug", "--relax-csp", "--demo", "--host"]) {
     assert.ok(claude.includes(f), `CLAUDE.md does not mention ${f}`);
   }
-  for (const cmd of ["done --root .", "where --root ."]) {
+  for (const cmd of ["done --root .", "where --root .", "scan --root ."]) {
     assert.ok(readme.includes(cmd) && claude.includes(cmd), `both docs show "${cmd}"`);
   }
 });
@@ -104,6 +104,8 @@ test("the docs cover the dev-server address, the hand-off to the assistant and t
   const readme = read("README.md");
   const claude = read("CLAUDE.md");
   for (const s of [
+    "`.dftp/tokens.json`",
+    "dftp scan [--root DIR] [--demo]",
     "--target http://localhost:5173",
     "Read /path/to/dftp/CLAUDE.md, then integrate DFTP into this project",
     "cp -R /path/to/dftp/skills/dftp ~/.claude/skills/",

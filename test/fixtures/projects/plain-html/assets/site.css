@@ -1,0 +1,3 @@
+.container { max-width: 960px; margin: 0 auto; padding: 0 16px; }
+.site-header { border-bottom: 1px solid #e5e7eb; }
+.footer { border-top: 1px solid #e5e7eb; color: #6b7280; font-size: 14px; }

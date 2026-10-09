@@ -12,6 +12,8 @@ import { envelope, validateFrameMsg, makeNonce, windowName, KEY_ALLOW } from "./
 import { validateList, isFilePath, isSha, FORMAT_ID, FORMAT_VERSION } from "./schema.js";
 import { whatOf, nameOf, where, pageText } from "./spec.js";
 import { pageIdentity } from "./devices.js";
+import { createStylesPanel } from "./styles-panel.js";
+import { createPalette } from "./palette.js";
 
 const SAVE_DELAY_MS = 150;
 const READY_WAIT_MS = 8000;
@@ -40,6 +42,8 @@ const TOASTS = Object.freeze({
   "undo-empty": "There is no earlier step.",
   "redo-empty": "There is no later step.",
   limit: "Not recorded: this page holds the maximum number of changes, or the element sits too deep to name.",
+  "scaffold-fixed": "The main container of a blank page stays as it is. Pick it to add elements into it.",
+  "insert-attach": "A change cannot be moved onto a new element, and a new element's change cannot be moved elsewhere.",
 });
 
 const NOT_LISTED = "The preview has left the configured pages. Use the Back button above it before editing.";
@@ -81,7 +85,10 @@ function cleanCode(map) {
 //   storageKey localStorage key for this window's preferences
 //   devices    [{id, label, width, height}]
 //   pages      [{id, label, path, keep}]
-//   features   {frameOrigin, themeToggle, libraryPrefixes, changesPath, version}
+//   features   {frameOrigin, themeToggle, libraryPrefixes, changesPath, version, start}
+//              start: the page to open on when it is not the first one (a
+//              blank page asked for with --blank); it wins over the page
+//              this window showed last
 export function createShell({ transport, el, ns, storageKey, devices, pages, features = {} }) {
   const doc = el && el.nodeType === 9 ? el : document;
   const win = doc.defaultView || window;
@@ -126,7 +133,7 @@ export function createShell({ transport, el, ns, storageKey, devices, pages, fea
   const prefGrid = prefs.grid && typeof prefs.grid === "object" ? prefs.grid : {};
 
   const st = {
-    page: pageById(prefs.page) ? prefs.page : pages[0].id,
+    page: features.start && features.start !== pages[0].id && pageById(features.start) ? features.start : pageById(prefs.page) ? prefs.page : pages[0].id,
     device: deviceById(prefs.device) ? prefs.device : devices[0].id,
     theme: prefs.theme === "dark" ? "dark" : "light",
     mode: "design",
@@ -161,6 +168,9 @@ export function createShell({ transport, el, ns, storageKey, devices, pages, fea
   };
   const devOf = () => deviceById(st.device) || devices[0];
   const pageOf = () => pageById(st.page) || pages[0];
+  // The element palette of blank pages (palette.js); made at start-up.
+  let palette = null;
+  const isBlank = (id) => !!pageById(id) && pageById(id).blank === true;
 
   // ---------------------------------------------------------------- messages to the layer
 
@@ -443,6 +453,7 @@ export function createShell({ transport, el, ns, storageKey, devices, pages, fea
       hintsHeight = hh;
       fit();
     }
+    if (palette) palette.update();
   }
 
   // ---------------------------------------------------------------- fitting the screen size into the window
@@ -601,6 +612,14 @@ export function createShell({ transport, el, ns, storageKey, devices, pages, fea
       return;
     }
     if (st.cur !== cur) return;
+    // A blank page: the style scan is read again (the palette picks its
+    // token styles from it), and a screen size with nothing stored starts
+    // with another size's new elements.
+    if (palette && isBlank(cur.page)) {
+      const [seeded] = await Promise.all([cur.rev === 0 && !cur.saved.length ? palette.seed(cur.page, cur.device) : [], styles.load()]);
+      if (st.cur !== cur) return;
+      if (seeded.length) cur.saved = seeded;
+    }
     setStatus("");
     navFrame(cur);
   }
@@ -675,6 +694,32 @@ export function createShell({ transport, el, ns, storageKey, devices, pages, fea
     }, LOAD_CHECK_MS);
   }
 
+  // ---------------------------------------------------------------- the Styles tab
+
+  // The tab, and the live style samples on their way to the server
+  // (styles-panel.js). A new sample is asked for only while the layer runs
+  // in After on an app page this window opened: a blank page is drawn from
+  // the tokens, so it is never counted. After a rescan a blank page loads
+  // its token style sheet again, so its new elements show the new values.
+  const layerUp = () => {
+    const cur = st.cur;
+    return !!cur && cur.ready && cur.loaded && !st.away;
+  };
+  const styles = createStylesPanel({
+    doc,
+    transport,
+    toast,
+    requestSample: () => {
+      if (!layerUp() || st.view !== "after" || isBlank(st.cur.page)) return false;
+      send("sample-styles");
+      return true;
+    },
+    onRescan: () => {
+      if (layerUp() && isBlank(st.cur.page)) send("reload-tokens");
+    },
+    closeDrawer: () => setDrawer(false),
+  });
+
   // ---------------------------------------------------------------- messages from the layer
 
   win.addEventListener("message", (e) => {
@@ -709,7 +754,7 @@ export function createShell({ transport, el, ns, storageKey, devices, pages, fea
           theme: st.theme,
           grid: { ...st.grid },
           code: { ...cur.code },
-          page: { id: page.id, path: page.path, keep: [...page.keep] },
+          page: { id: page.id, path: page.path, keep: [...page.keep], ...(page.blank === true ? { blank: true } : {}) },
           device: { id: dev.id, width: dev.width, height: dev.height },
           scale: st.scale,
         });
@@ -748,6 +793,11 @@ export function createShell({ transport, el, ns, storageKey, devices, pages, fea
         return;
       case "flushed":
         if (flushDone) flushDone();
+        return;
+      case "style-sample":
+        // Counted styles of the app page this window opened (never a blank
+        // page); the page, device and theme are this window's own.
+        if (cur.loaded && st.view === "after" && !st.away && !isBlank(cur.page)) styles.onSample({ page: cur.page, device: cur.device, theme: st.theme }, m);
         return;
       default:
     }
@@ -967,6 +1017,7 @@ export function createShell({ transport, el, ns, storageKey, devices, pages, fea
   }
 
   function drawSel() {
+    if (palette) palette.update();
     const box = $("picked");
     clear(box);
     const s = st.sel;
@@ -984,7 +1035,8 @@ export function createShell({ transport, el, ns, storageKey, devices, pages, fea
       kv.append(h("dt", { text: k }), h("dd", { className: cls || "", text: v }));
     };
     row("Element", `<${s.tag}>${s.text ? ` "${s.text.slice(0, 60)}"` : ""}`);
-    row("Source", s.loc ? `${s.part ? "inside " : ""}${s.loc}` : "not stamped", "mono");
+    const fresh = s.key === "scaffold" ? "the main container of this blank page" : s.key.startsWith("ins:") ? "a new element, not in the code yet" : "";
+    row("Source", s.loc ? `${s.part ? "inside " : ""}${s.loc}` : fresh || "not stamped", "mono");
     if (s.piece) row("Part", "a single word of a text", "soft");
     else if (s.part) row("Part", `child ${s.path || "?"} of the stamped element`, "soft");
     if (s.used_in) row("Inside", s.used_in, "mono");
@@ -1005,7 +1057,7 @@ export function createShell({ transport, el, ns, storageKey, devices, pages, fea
       box.appendChild(crumbs);
     }
     const btns = h("div", { className: "row-btns" });
-    if (s.change) btns.appendChild(h("button", { type: "button", className: "tiny-btn", disabled: before, onclick: () => send("reset", { key: s.key }) }, "Remove change"));
+    if (s.change) btns.appendChild(h("button", { type: "button", className: "tiny-btn", disabled: before, onclick: () => send("reset", { key: s.key }) }, s.key.startsWith("ins:") ? "Remove element" : "Remove change"));
     btns.appendChild(h("button", {
       type: "button",
       className: "tiny-btn",
@@ -1114,6 +1166,28 @@ export function createShell({ transport, el, ns, storageKey, devices, pages, fea
 
   // ---------------------------------------------------------------- start
 
+  if (pages.some((p) => p.blank === true) && $("palette-bar")) {
+    palette = createPalette({
+      doc,
+      win,
+      transport,
+      tokens: () => styles.tokens(),
+      send,
+      devices,
+      state: () => ({
+        blank: isBlank(st.page) && !!st.cur && st.cur.page === st.page,
+        loaded: !!st.cur && st.cur.loaded,
+        view: st.view,
+        away: st.away,
+        sel: st.sel,
+        list: st.list,
+      }),
+      setDesign: () => {
+        if (st.mode !== "design") setMode("design");
+      },
+      relayout: () => fit(),
+    });
+  }
   $("tool-version").textContent = typeof features.version === "string" ? `v${features.version}` : "";
   setDrawer(st.drawer);
   mark();

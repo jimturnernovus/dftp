@@ -1,0 +1,20 @@
+{
+  "colors": {
+    "highlight": "#f59e0b",
+    "modes": {
+      "dark": { "highlight": "#fbbf24" }
+    }
+  },
+  "space": [0, 4, 8, 16, 32],
+  "fontSizes": [12, 14, 16, 20],
+  "radii": { "sm": 2, "pill": 9999 },
+  "breakpoints": ["40em", "52em"],
+  "settings": {
+    "color": {
+      "palette": [
+        { "slug": "ink", "color": "#1f2937", "name": "Ink" },
+        { "slug": "paper", "color": "#fffdf7", "name": "Paper" }
+      ]
+    }
+  }
+}

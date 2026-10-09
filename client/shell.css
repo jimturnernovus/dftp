@@ -568,3 +568,267 @@ body[data-current-view="before"] .hint-set[data-for="before"] { display: inline;
   }
   .workspace.panel-open ~ .notices { right: 16px; }
 }
+
+/* ---- side panel tabs and the Styles tab ---- */
+
+.side-tabs {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  padding: 8px 14px 0;
+  border-bottom: 1px solid var(--ui-rule);
+}
+
+.side-tabs button {
+  margin-bottom: -1px;
+  padding: 5px 12px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--ui-ink-2);
+  font-weight: 600;
+}
+
+.side-tabs button:hover:not(.is-on) { color: var(--ui-ink); }
+
+.side-tabs button.is-on {
+  border-color: var(--ui-rule);
+  background: var(--ui-side);
+  color: var(--ui-ink);
+}
+
+/* The Changes tab is the panel's other sections; the Styles tab replaces them. */
+.side-panel[data-tab="styles"] > .panel-sec:not(.styles-sec) { display: none; }
+.styles-sec[hidden] { display: none; }
+
+.tk-body {
+  flex: 1;
+  min-height: 60px;
+  margin-top: 6px;
+  overflow: auto;
+}
+
+.tk-sec { margin-bottom: 14px; }
+
+.tk-sec-head {
+  margin: 0 0 4px;
+  color: var(--ui-ink-2);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tk-sec-count { color: var(--ui-ink-3); font-weight: 600; }
+
+.tk-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tk-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 0;
+  border-top: 1px solid var(--ui-rule-soft);
+}
+
+.tk-pre {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  min-height: 28px;
+}
+
+.tk-main { flex: 1; min-width: 0; }
+
+.tk-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tk-name {
+  min-width: 0;
+  color: var(--ui-ink);
+  font: 12px/1.4 var(--ui-mono);
+  overflow-wrap: anywhere;
+}
+
+.tk-value {
+  flex: none;
+  max-width: 55%;
+  color: var(--ui-ink-2);
+  font: 11.5px/1.4 var(--ui-mono);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.tk-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.tk-role,
+.tk-live,
+.tk-alias,
+.tk-mode {
+  padding: 0 6px;
+  border-radius: 9px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.tk-role { background: #2a2459; color: var(--ui-code); }
+.tk-live { background: #123528; color: #7ee2b8; }
+.tk-alias,
+.tk-mode { background: var(--ui-control); color: var(--ui-ink-2); }
+
+.tk-src {
+  margin-top: 2px;
+  color: var(--ui-code);
+  font: 11px/1.4 var(--ui-mono);
+  overflow-wrap: anywhere;
+}
+
+.tk-swatch { display: flex; }
+
+.tk-chip {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+}
+
+.tk-swatch .tk-chip:not(:only-child) { width: 20px; border-radius: 6px 0 0 6px; }
+.tk-swatch .tk-chip-dark:not(:only-child) { border-left: 0; border-radius: 0 6px 6px 0; }
+
+.tk-type {
+  max-width: 48px;
+  overflow: hidden;
+  color: var(--ui-ink);
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.tk-bar {
+  display: block;
+  height: 8px;
+  margin: 4px 0 1px;
+  border-radius: 2px;
+  background: var(--ui-brand);
+}
+
+.tk-radius {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--ui-brand);
+  background: rgba(125, 107, 251, 0.15);
+}
+
+.tk-shadow-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 32px;
+  border-radius: 4px;
+  background: #e9ecf2;
+}
+
+.tk-shadow {
+  width: 26px;
+  height: 18px;
+  border-radius: 3px;
+  background: #fff;
+}
+
+.tk-scale,
+.tk-empty,
+.tk-foot {
+  margin: 0 0 6px;
+  color: var(--ui-ink-2);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* ---- blank pages: the element palette above the preview ---- */
+
+.palette-bar {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--ui-rule-soft);
+  background: var(--ui-head-2);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.palette-bar[hidden] { display: none; }
+
+.pal-lead {
+  margin-right: 2px;
+  color: var(--ui-ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pal-item {
+  padding: 4px 10px;
+  border: 1px dashed #3a4559;
+  border-radius: 6px;
+  background: var(--ui-control);
+  cursor: grab;
+  touch-action: none;
+}
+
+.pal-item:hover:not(:disabled) { border-color: var(--ui-brand); border-style: solid; }
+.pal-item:active:not(:disabled) { cursor: grabbing; }
+
+/* The hint takes what is left of the row and never wraps: its text changes
+   with every pick, and a bar that grew a line would move the preview under
+   the pointer in the middle of a drag. The whole text is its title. */
+.pal-hint {
+  flex: 1 1 0;
+  min-width: 0;
+  margin-left: 6px;
+  overflow: hidden;
+  color: var(--ui-ink-3);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* While an element is dragged: a cover that keeps the pointer in this
+   window over the preview, and a label that follows it. */
+.pal-cover {
+  position: fixed;
+  z-index: 40;
+  cursor: grabbing;
+}
+
+.pal-ghost {
+  position: fixed;
+  z-index: 41;
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: #0d9488;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.pal-ghost.is-out { background: #4b5563; opacity: 0.8; }

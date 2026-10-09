@@ -1,0 +1,22 @@
+{
+  "$schema-note": "Colors in the Design Tokens Community Group format.",
+  "color": {
+    "$type": "color",
+    "brand": {
+      "600": { "$value": "#2f5bd8", "$description": "Main brand color" },
+      "400": { "$value": { "colorSpace": "srgb", "components": [0.42, 0.549, 1], "alpha": 1 } }
+    },
+    "neutral": {
+      "50": { "$value": "#f9fafb" },
+      "900": { "$value": "#111827" }
+    },
+    "text": { "$value": "{color.neutral.900}" },
+    "background": {
+      "$value": "{color.neutral.50}",
+      "$extensions": { "mode": { "dark": "{color.neutral.900}" } }
+    },
+    "danger": { "$value": "oklch(0.577 0.245 27.325)" },
+    "loop-a": { "$value": "{color.loop-b}" },
+    "loop-b": { "$value": "{color.loop-a}" }
+  }
+}

@@ -1,6 +1,6 @@
 ---
 name: dftp
-description: Set up DFTP (Designer for the Page) in a web project, and apply the layout and text changes recorded in .dftp/CHANGES.md as real code. Use when the user asks to integrate, start or troubleshoot DFTP, or to apply, review or finish DFTP layout changes.
+description: Set up DFTP (Designer for the Page) in a web project, and apply the layout and text changes recorded in .dftp/CHANGES.md as real code, including new pages laid out on a DFTP blank page, written with the project's own style tokens (.dftp/tokens.json) and components. Use when the user asks to integrate, start or troubleshoot DFTP, to apply, review or finish DFTP layout changes, or to build a page from DFTP blank-page changes.
 ---
 
 <!-- Generated from CLAUDE.md by scripts/build-skill.mjs. Edit CLAUDE.md, then run that script. -->
@@ -19,6 +19,12 @@ in a frame, lets them move, resize, hide and re-word elements, and records
 each change with where that element comes from in the source. Nothing in the
 project is edited by DFTP itself; you turn the recorded changes into real code
 changes, written the way the project already writes its layout.
+
+It also reads the project's styles into `.dftp/tokens.json` (colors, fonts,
+spacing, radii, shadows, breakpoints and shared components, each with the
+file and line it comes from), and offers blank pages (`--blank`) on which
+the user lays out a page that does not exist yet from elements styled with
+those tokens. Use the tokens' own names whenever you write a value.
 
 ## 2. Safety rules (always)
 
@@ -164,8 +170,20 @@ there is no `npm install` for DFTP itself.
 
 Other flags: `--page /path` (repeatable; the id is made from the path),
 `--no-text`, `--debug` (request log and a debug handle in the page),
-`--host ::1`, `--demo` (the built-in demo page instead of a dev server).
+`--host ::1`, `--demo` (the built-in demo page instead of a dev server),
+`--blank [NAME]` (a blank page styled from the project's tokens, for laying
+out a page that does not exist yet; repeatable; the designer opens on it;
+without `--target` or a `target` in `dftp.config.json` it needs no dev
+server, and with one the app's pages are listed first; see "Building a page
+from blank-page changes" in section 5).
 `node <dftp>/bin/dftp.mjs where --root .` prints where `CHANGES.md` is.
+`node <dftp>/bin/dftp.mjs scan --root .` reads the project's styles into
+`.dftp/tokens.json` and prints a summary (the designer also does this when
+it starts). Running it once during setup shows what DFTP found; when the
+summary reports few tokens because the project is styled with something
+this release does not read (see "Reading `.dftp/tokens.json`" in section
+4), tell the user that the Styles tab and blank pages will see less of the
+project's look.
 
 ## 4. Reading changes
 
@@ -177,6 +195,7 @@ Changes live in the project root under `.dftp/`:
 | `.dftp/changes/<page>__<device>.json` | the change file for one page and device (format `dftp.changes`, version 1) |
 | `.dftp/history/` | earlier versions of each change file (30 kept per page and device) |
 | `.dftp/fingerprint.key` | the key for source fingerprints; never read, copy or commit it |
+| `.dftp/tokens.json` | the project's styles as normalised tokens (format `dftp.tokens`, version 1): colors, type, spacing, radii, shadows, breakpoints, each with its source `file` and `line`; plus `scales`, `breakpoints` and shared `components`. `usage.seenLive` marks a value the page itself showed when the designer counted its computed styles (app pages only; a blank page is never counted); a token whose only source is `live` (`color.auto.…`) is a value the page shows that no file names |
 | `.dftp/.gitignore` | contains `*`, so nothing here is committed unless the user opts in |
 
 Read `CHANGES.md` first, then the JSON file when you need more detail.
@@ -185,6 +204,11 @@ Read `CHANGES.md` first, then the JSON file when you need more detail.
   page: apply them once, without a breakpoint.
 - **"On some devices"** lists changes made the same way on several (not all)
   devices: one rule scoped to those devices.
+- **"Screen sizes not edited"** (blank pages only) names screen sizes that
+  were never saved. The designer shows them with the new elements of the
+  first size that has some, without that size's moves, sizes and hiding,
+  and the two lists above already count them that way: an element nobody
+  changed per size is "On every device".
 - An **"Unreadable change file … was left untouched"** line names a change
   file DFTP could not parse. Tell the user; do not edit or delete it.
 - Each page section is titled with the page id, the device and its width, the
@@ -226,6 +250,23 @@ Read `CHANGES.md` first, then the JSON file when you need more detail.
     element was not on the page: skip it and say so in your report.
   - `container: dragged out of …` (fields `detached`, `container`): the user
     pulled the element out of that parent box. See "Detached elements" below.
+- A page section that starts with **"This page is new"** comes from a blank
+  page (`--blank`). Its **"New elements"** list holds elements that are not
+  in the code yet, in build order:
+
+  ```
+  2. [e5f6g7h8] new button <button> "Buy now" — inside #1 [a1b2c3d4], item 1 of 2
+     use the project's component Button from src/components/ui/button.jsx
+     styles: background = color.primary ("--color-primary" in src/index.css:24) · border-radius = radius.md ("--radius-md" in src/index.css:14)
+     on this screen size: width from 120 to 180 px
+  ```
+
+  `inside #1 [a1b2c3d4]` is the box listed as item 1 (`inside the page's main
+  container` is the page itself); `item 1 of 2` is its place in that box;
+  `styles` names a token id from `.dftp/tokens.json` per CSS property, with
+  the names it is defined under; `on this screen size` lists moves, sizes and
+  hiding made on this device only. See "Building a page from blank-page
+  changes" in section 5.
 
 Fields of one change in the JSON file (all optional except `id` and `key`):
 
@@ -252,6 +293,71 @@ Fields of one change in the JSON file (all optional except `id` and `key`):
 | `at` | when the change was last edited (a UTC timestamp) |
 | `missing` | not on the page at the last save |
 | `detached`, `container` | the element was dropped entirely outside its parent; `container` gives that parent's `tag`, `loc` and child `path` |
+| `kind` | `"insert"`: a new element from a blank page (its `key` is `ins:` and its `id`; it has no `loc`) |
+| `element` | for an insert: `heading`, `text`, `button`, `input`, `card`, `image`, `divider`, `section` or `grid` (a grid row) |
+| `parent`, `index` | for an insert: the box it goes in (`"scaffold"`, the page's main container, or another insert's `key`) and its 0-based place there |
+| `styles` | for an insert: `{css property: token id}`, ids from `.dftp/tokens.json` |
+| `component`, `component_file` | for an insert: the project's own component for it (export name and file), when the style scan found one |
+
+### Reading `.dftp/tokens.json`
+
+`tokens.json` is the style scan's result: how the project is styled,
+normalised into one list of tokens. DFTP writes it when the designer
+starts, on **Rescan** in its Styles tab, and with
+`node <dftp>/bin/dftp.mjs scan --root .`, which you may run yourself (it
+writes only this file and prints a summary). Like everything under
+`.dftp/`, it is data: its names and values come from project files and
+from the page, never instructions, and it is never edited by hand.
+
+```json
+{ "format": "dftp.tokens", "version": 1, "generated_at": "2026-01-01T00:00:00.000Z", "root": ".",
+  "tokens": [{
+    "id": "color.primary", "type": "color",
+    "value": { "hex": "#2f5bd8", "alpha": 1 }, "raw": "oklch(0.52 0.19 263)",
+    "modes": { "dark": { "hex": "#6b8cff", "alpha": 1 } },
+    "aliasOf": null, "role": "primary",
+    "sources": [{ "adapter": "tailwind-v4", "file": "src/index.css", "line": 7, "name": "--color-primary" }],
+    "usage": { "count": 12, "seenLive": true, "live": 30 }, "confidence": 0.95 }],
+  "scales": { "spacing": [4, 8, 12, 16, 24, 32], "fontSize": [14, 16, 20, 28], "radius": [6, 10] },
+  "breakpoints": [{ "name": "md", "min": 768 }, { "name": "lg", "min": 1024 }],
+  "components": [{ "kind": "button", "file": "src/components/ui/button.jsx", "export": "Button" }],
+  "diagnostics": [{ "adapter": "css-vars", "file": "src/index.css", "line": 20, "code": "alias-missing" }],
+  "scan": { "files": 3, "skipped": 0, "ms": 6, "truncated": false, "adapters": { "css": 1, "css-vars": 1, "tailwind-v4": 1 } },
+  "live": [] }
+```
+
+| field | meaning |
+|---|---|
+| `id` | a dotted id made from the source name (`--color-brand-600` and a token file's `color.brand.600` both give `color.brand.600`), or from the value when nothing names it (`color.auto.2f5bd8`, `font-size.auto.12_5px`) |
+| `type` | `color`, `gradient`, `dimension`, `fontFamily`, `fontSize`, `fontWeight`, `lineHeight`, `letterSpacing`, `radius`, `shadow`, `border`, `opacity`, `zIndex`, `duration`, `easing` or `breakpoint` |
+| `value` | normalised: a color is `{hex, alpha}` in sRGB; a length `{value, unit, px}` (`px` where it can be worked out, a rem as 16 px); a shadow a list of layers; other types a small object (`{families}`, `{value}`, `{ms}`, `{bezier}`, `{width, style, color}` ...); `null` when it could not be resolved |
+| `raw` | the value as written where it is defined (or as the page reported it) |
+| `modes` | the value per theme (`dark` ...), from `.dark`, `.theme-NAME`, `[data-theme=…]`, `prefers-color-scheme: dark` or a token file's modes |
+| `aliasOf` | the id of the token this one refers to (`var(--x)`, `{color.x}`) |
+| `role` | a guess from names and use: `primary`, `secondary`, `accent`, `surface`, `background`, `text`, `muted`, `border`, `danger`, `success`, `warning`, or `null`. In `--bg-primary` or `--text-secondary` the first word decides (background, text). On a font family or font size, `text` marks the body text's (set on `:root`, `html` or `body`) |
+| `sources` | where it comes from: `adapter` (`css`, `css-vars`, `tailwind-v4`, `tokens-json`, `html`, `sfc` for a `.vue`, `.svelte` or `.astro` style block, or `live` for the page), `file` and `line`, and `name` as written there (`--color-primary`, `color.brand.600`). A source without `name` is a place that uses the value literally; a `live` source has `page` and `device` instead of a file |
+| `usage` | `count`: how often the files use it; `seenLive`: the page showed it when the designer counted its computed styles (app pages only; a blank page is never counted); `live`: on how many elements |
+| `confidence` | 0 to 1: named tokens score high (about 0.9); values used without a name, and values only the page shows, score lower |
+| `scoped` | `true` when the token is defined only inside a narrower rule (a component's selector, a width range): it is undefined on the rest of the page, so do not use it outside that component |
+| `scales` | the spacing, font-size and radius steps found, in px, smallest first |
+| `breakpoints` | `name` and `min` (px). A made-up name such as `bp-641` comes from a media query; a numbered one (`0`, `1`) from a list in a theme file |
+| `components` | the project's shared components by kind (`button`, `card`, `input` ...), with `file` and `export` |
+| `diagnostics` | why something was skipped, as codes (`parse-skip`, `alias-cycle`, `too-large`, `budget-time`, `unsupported-color` for a `color-mix()` or relative color DFTP could not work out, `scoped-skip` for a narrower definition left out because a page-wide one exists ...) |
+| `scan` | files read, adapters used, and `truncated` when the scan stopped at a limit (5000 files, 48 MiB, 10 s, or the build's work budget: `budget-build`) |
+| `live` | the computed-style samples the designer stored; nothing to act on |
+
+This release reads plain CSS, CSS custom properties, Tailwind CSS v4
+`@theme` variables, design-token and theme JSON files (Design Tokens
+Community Group, Style Dictionary, Tokens Studio, WordPress `theme.json`),
+HTML style blocks and attributes, and the `<style>` blocks of `.vue`,
+`.svelte` and `.astro` files. It does **not** read SCSS or LESS (files, or
+`lang="scss"` / `lang="less"` blocks in components), a Tailwind CSS v3
+`tailwind.config.js`, Tailwind classes in code, CSS-in-JS (styled-components,
+Emotion, style objects) or SVG and canvas code. For a project styled that
+way, `tokens.json` is incomplete: read those files yourself before choosing
+a value. If `tokens.json` is missing, older than the project's style files,
+or `scan.truncated` is true, run the scan again or read the project's styles
+directly.
 
 ## 5. Applying changes (never as fixed offsets)
 
@@ -278,6 +384,41 @@ space, a size) and write it the way the project already does layout.
 - No `loc` → search the project with the `find:` selector, classes, role,
   label and text. If several places match, ask.
 
+### Using the project's tokens
+
+Every value you write (a gap, a margin, a width, a color, a radius, a font
+size) should use the project's own name for it, never the raw number or hex
+code. Look the value up in `.dftp/tokens.json` (section 4) and write the
+name the way the project refers to it:
+
+- **A CSS custom property** (`name` starts with `--`): `var(--space-4)` in
+  CSS, or the class the project already builds on it.
+- **Tailwind CSS v4** (`adapter: "tailwind-v4"`): the utility made from the
+  theme variable: `--color-brand-600` → `bg-brand-600` / `text-brand-600` /
+  `border-brand-600`, `--radius-lg` → `rounded-lg`, `--text-sm` → `text-sm`,
+  `--shadow-md` → `shadow-md`, `--font-display` → `font-display`,
+  `--breakpoint-md` → `md:`; spacing is a multiple of `--spacing`
+  (`p-4` is 4 × `--spacing`).
+- **A token file** (`adapter: "tokens-json"`, a dotted `name`): find how the
+  project consumes that file (generated CSS variables, a theme object, a
+  Tailwind preset) and use that form.
+- **A token with a role** (`primary`, `text`, `surface` ...) and an
+  `aliasOf` chain: prefer the semantic name (`--primary`) over the palette
+  step it points to (`--blue-600`) when the code around it does the same.
+- **Dark mode**: never write a token's `modes.dark` value yourself; the
+  project's variable or `dark:` class already switches it.
+- **Between two steps**: when a change works out to a value no token has
+  (a 22 px gap on a 16 / 24 scale), use the nearest step in `scales` and
+  say so in your report; ask when the difference matters.
+- **No name**: a token whose sources have no `name` (`color.auto.…`) is a
+  value the project repeats without naming it, and one whose only source is
+  `live` is a value the page shows that no scanned file names (it may come
+  from a library or a style the scan does not read). Write such a value the
+  way the surrounding code writes it; do not invent a new variable or token
+  unless the user asks.
+- **Components**: when `components` lists one for what you are adding (a
+  button, an input, a card), use it rather than plain markup.
+
 ### Moves
 
 Use `ctx` (the `layout:` line):
@@ -291,6 +432,9 @@ Use `ctx` (the `layout:` line):
   `items-*`, `self-*`, `margin-left: auto` and similar.
 - **Small moves** (about 12 px or less): margin, padding or gap, on the
   project's spacing scale (for Tailwind, the nearest `m-*` / `p-*` / `gap-*`).
+  `scales.spacing` in `.dftp/tokens.json` lists the scale DFTP found, in px;
+  write the project's own token or class for a step (see "Using the
+  project's tokens"), not the number.
 - **Grid** parents: `col-start-*`, `col-span-*`, `row-start-*` or the CSS
   equivalents.
 - **Forbidden:** `transform: translate(...)`, `position: relative` with
@@ -335,7 +479,8 @@ asks for that.
 ### Device scoping
 
 Read the project's breakpoints first (Tailwind config, CSS media queries,
-theme files). The device widths in the `Devices:` line of `CHANGES.md` are
+theme files); `breakpoints` in `.dftp/tokens.json` lists the ones the scan
+found. The device widths in the `Devices:` line of `CHANGES.md` are
 sample points, never breakpoints: a boundary always falls between two device
 widths, so phones narrower or wider than the sample still get the rule.
 
@@ -360,12 +505,79 @@ widths, so phones narrower or wider than the sample still get the rule.
 When two changes contradict each other (on one device or across devices), or
 a change cannot be done cleanly, ask the user instead of guessing.
 
+### Building a page from blank-page changes
+
+A section that starts with "This page is new" describes a page laid out on a
+blank page. Nothing of it exists in the code yet.
+
+- **Create the page the project's way**: a new route or page component
+  (ask the user for its path and URL when they are not obvious), using the
+  project's layout shell, as its other pages do.
+- **The page's main container** stands for the page body. In the designer
+  it is a centred column of 12 grid columns (6 on tablets, one column on
+  phones) with padding from the spacing scale; build it with the project's
+  own page container and layout, not a copy of that grid, unless the
+  project lays its pages out that way.
+- **Build the "New elements" in order.** Each `inside #N` is the box from
+  item N; nest the markup the same way. Each item of the page's main
+  container spans its full width. A `section` stacks its items in a column,
+  a `card` is a padded, bordered box, a `grid` is a row of columns (3 / 2 / 1
+  on desktop / tablet / phone in the designer). The place in this list is
+  where an element belongs (one the user dragged out of a box is already
+  listed in its new box).
+- **Heading levels**: the tag shown for a heading (`<h2>`) is the palette's
+  default, not a choice the user made. Give headings the levels the page's
+  outline needs: the page's main heading is an `<h1>` when the project's
+  other pages have one, and a heading inside a card or section is one level
+  below the heading it sits under.
+- **Use the project's components.** An element with `use the project's
+  component X from file` must be built with that component (imported from
+  that file, with its own props for variants and sizes), not as plain
+  markup: pick the variant whose look matches its token styles (a primary
+  background is the primary or default variant) instead of overriding the
+  component's classes. Without one, use whatever the project already uses
+  for that kind of element. Before you put a class or a style on a
+  component (for a size on one screen size, say), check that it passes
+  `className` / `style` on and merges them with its own (for example
+  `className={cn("btn", className)}`); one that replaces its own classes
+  loses its look. If it does not merge them, put the class on a wrapper
+  element, or ask.
+- **Use the tokens, never their values.** Look each token id of a `styles`
+  line up in `.dftp/tokens.json` and write it as described in "Using the
+  project's tokens" above (the CSS variable, a Tailwind class such as
+  `bg-primary` for `--color-primary`, or the theme key named in `sources`).
+  Never inline a fixed px value or color when a token or scale step exists
+  for it; a property with no token gets the project's usual look. A token
+  without a name (an id with `.auto.`, such as `spacing.auto.20px`) is a
+  value the project writes as it is: write it the way the code at its
+  `file:line` does, and do not invent a variable for it. The
+  `file:line` after a token is where it was defined at the last save; when
+  it no longer matches, or the id is gone from `tokens.json` (the styles
+  changed since), use the current token of the same type and role and say
+  so.
+- **Texts** are placeholders the user typed or left as they were
+  (`"Heading"`, `"Button"`): keep the user's words, and ask about defaults
+  that were never changed.
+- **Responsive**: the same element on every device (listed under "On every
+  device") needs no breakpoint. A size under "Screen sizes not edited"
+  shows the new elements of another size unchanged, and is already counted
+  in the lists above. Differences per device (`on this screen size`, an
+  element listed for some devices only) follow "Device scoping" above;
+  `hidden` on one size only means hide it in that range.
+- An item marked "not drawn at the last save", or one inside a box that is
+  no longer listed, is unclear: ask before building it.
+- Report by the ids as usual, and remove the inserts with `dftp done` once
+  the page is built and the user has checked it.
+
 ## 6. Verify
 
 - Keep the dev server and the designer running.
 - Once a change is in the code, the designer shows it twice (the code plus
   the recorded change) until it is marked done. Use **Before** / **After**
   (the `B` key) and every device to compare.
+- A page built from a blank page has its own address: with the user's OK,
+  add it to `pages` (or start the designer with `--page`) and compare it
+  with the blank page on every device.
 - Check that nothing overflows or overlaps at each device width and at
   320 px. For 320 px, either open the dev server itself in a browser window
   320 px wide, or add `{ "id": "narrow", "label": "320", "width": 320,

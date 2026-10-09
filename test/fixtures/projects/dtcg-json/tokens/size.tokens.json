@@ -1,0 +1,40 @@
+{
+  "spacing": {
+    "$type": "dimension",
+    "sm": { "$value": { "value": 8, "unit": "px" } },
+    "md": { "$value": "16px" },
+    "lg": { "$value": "1.5rem" }
+  },
+  "radius": {
+    "$type": "dimension",
+    "md": { "$value": "6px" }
+  },
+  "font": {
+    "family": {
+      "body": { "$type": "fontFamily", "$value": ["Inter", "Helvetica Neue", "sans-serif"] }
+    },
+    "weight": {
+      "bold": { "$type": "fontWeight", "$value": 700 }
+    }
+  },
+  "shadow": {
+    "card": {
+      "$type": "shadow",
+      "$value": { "color": "#00000014", "offsetX": "0px", "offsetY": "1px", "blur": "3px", "spread": "0px" }
+    }
+  },
+  "breakpoint": {
+    "$type": "dimension",
+    "md": { "$value": "768px" }
+  },
+  "typography": {
+    "heading": {
+      "$type": "typography",
+      "$value": { "fontFamily": "{font.family.body}", "fontSize": "32px", "fontWeight": 700, "lineHeight": 1.2 }
+    }
+  },
+  "motion": {
+    "fast": { "$type": "duration", "$value": { "value": 120, "unit": "ms" } },
+    "standard": { "$type": "cubicBezier", "$value": [0.4, 0, 0.2, 1] }
+  }
+}

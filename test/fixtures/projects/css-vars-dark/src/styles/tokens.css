@@ -1,0 +1,43 @@
+/* Design tokens as custom properties, with a dark theme. */
+:root {
+  --brand-600: #2f5bd8;
+  --brand-400: rgb(107 140 255);
+  --color-primary: var(--brand-600);
+  --surface: #ffffff;
+  --text: hsl(222 47% 11%);
+  --muted-foreground: #64748b;
+  --border: oklch(0.92 0.004 286);
+  --danger: #dc2626;
+  --radius: 0.5rem;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-4: 16px;
+  --font-sans: "Inter", system-ui, sans-serif;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 120ms;
+  --z-modal: 50;
+  --link: var(--missing-name);
+  --loop-a: var(--loop-b);
+  --loop-b: var(--loop-a);
+}
+
+.dark {
+  --surface: #0b1020;
+  --text: #e6e9f2;
+  --color-primary: var(--brand-400);
+}
+
+[data-theme="dark"] {
+  --muted-foreground: #9aa3b5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --border: #262b3a;
+  }
+}
+
+.card {
+  --card-pad: 24px;
+}

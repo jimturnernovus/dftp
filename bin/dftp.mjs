@@ -2,8 +2,10 @@
 // DFTP (Designer for the Page) command line.
 //
 //   dftp [serve] --demo | --target <url>   start the designer
+//   dftp [serve] --blank [name]            design a new page from an empty canvas
 //   dftp done <id...>                      remove changes that were applied in code
 //   dftp where                             print where CHANGES.md is written
+//   dftp scan                              read the project's styles into .dftp/tokens.json
 //
 // When this Node supports the permission model, the command runs itself again
 // inside it (read: the tool and the project; write: the project's .dftp).
@@ -22,6 +24,7 @@ import { openStore, prepareDirs, StoreError, DATA_DIR } from "../server/store.mj
 import { permissionSupported, permissionArgs } from "../server/permission.mjs";
 import { DEMO_PAGE } from "../server/static.mjs";
 import { openBrowser } from "../server/open-browser.mjs";
+import { scanProject, summaryLines } from "../server/scan/scanner.mjs";
 import { isChangeId } from "../client/core/schema.js";
 import { BUILT_IN_DEVICES } from "../client/core/devices.js";
 
@@ -38,8 +41,10 @@ const USAGE = `DFTP (Designer for the Page): a drag-and-drop layout designer for
 Usage:
   dftp [serve] --demo [--open]
   dftp [serve] --target http://localhost:5173 [--root DIR] [options]
+  dftp [serve] --blank [NAME] [--root DIR] [options]
   dftp done [--root DIR] [--demo] <id> [<id> ...]
   dftp where [--root DIR] [--demo]
+  dftp scan [--root DIR] [--demo]
 
 Options:
   --demo          show the built-in demo page instead of a dev server
@@ -48,6 +53,9 @@ Options:
   --root DIR      project folder (default: the current folder; with --demo, the DFTP folder)
   --port N        designer port, 1024-65534 (default 7450); the page is served on N+1
   --page PATH     a page of your app to offer (repeatable)
+  --blank [NAME]  add a blank page styled from your project's tokens, to build a
+                  new page on (repeatable; NAME makes its id blank-NAME); with
+                  no --target and no --demo, blank pages are the only pages
   --open          open the designer in your browser
   --no-text       do not record any text from the page
   --debug         log each request (method, path, status, time); debug handle in the page
@@ -148,7 +156,10 @@ async function serve(flags, argv) {
   const app = await startServers(cfg, { log: (line) => out(line) });
   out(`DFTP (Designer for the Page) ${cfg.version}`);
   out(`  Designer:  ${app.link}`);
-  out(cfg.mode === "demo" ? `  Page:      the demo page (${DEMO_PAGE_DEF.label})` : `  Page:      your dev server at ${cfg.target.origin}`);
+  if (cfg.mode === "demo") out(`  Page:      the demo page (${DEMO_PAGE_DEF.label})`);
+  else if (cfg.mode === "proxy") out(`  Page:      your dev server at ${cfg.target.origin}`);
+  const blanks = cfg.pages.filter((p) => p.blank).map((p) => p.id);
+  if (blanks.length) out(`  Blank:     ${blanks.join(", ")} (new pages, styled from your project's tokens)`);
   out(`  Changes:   ${DATA_DIR}/CHANGES.md in ${cfg.root === cfg.toolDir ? "the DFTP folder" : "the project folder"} (dftp where prints the full path)`);
   out("  Stop:      Ctrl+C");
   if (cfg.open) {
@@ -182,7 +193,7 @@ async function projectSettings(root, demo) {
 }
 
 async function done(flags, ids, argv) {
-  if (flags.target || flags.port !== null || flags.pages.length || flags.open || flags.host !== null) {
+  if (flags.target || flags.port !== null || flags.pages.length || flags.open || flags.host !== null || flags.blank.length) {
     throw new ConfigError("done takes only --root (and --demo) and change ids");
   }
   if (ids.length === 0) throw new ConfigError("done needs at least one change id");
@@ -224,6 +235,35 @@ async function where(flags) {
   return 0;
 }
 
+// Reads the project's styles (CSS, custom properties, Tailwind v4 theme
+// variables, token files, HTML) into .dftp/tokens.json and prints a summary.
+async function scan(flags, argv) {
+  if (flags.target || flags.port !== null || flags.pages.length || flags.open || flags.host !== null || flags.blank.length) {
+    throw new ConfigError("scan takes only --root (and --demo)");
+  }
+  const root = await resolveRoot(flags.root, { cwd: process.cwd(), toolDir: TOOL_DIR, demo: flags.demo });
+  if (!inSandbox) {
+    if (permissionSupported()) {
+      await prepareDirs(root, { create: true });
+      return runSandboxed(argv, { root, open: false });
+    }
+    warn(NO_SANDBOX_NOTE);
+  }
+  const settings = await projectSettings(root, flags.demo);
+  const store = await openStore({ root, ...settings, version: readVersion(TOOL_DIR), create: true, noFingerprint: true });
+  const before = await store.readTokens();
+  const doc = await scanProject({
+    root,
+    libraryPrefixes: settings.libraryPrefixes,
+    only: flags.demo ? ["demo/"] : null,
+    live: before && before.live ? before.live : [],
+  });
+  await store.writeTokens(doc);
+  for (const line of summaryLines(doc)) out(line);
+  out(`Wrote ${DATA_DIR}/tokens.json`);
+  return 0;
+}
+
 async function main(argv) {
   let parsed;
   try {
@@ -243,6 +283,7 @@ async function main(argv) {
   try {
     if (cmd === "where") return await where(flags);
     if (cmd === "done") return await done(flags, ids, argv);
+    if (cmd === "scan") return await scan(flags, argv);
     return await serve(flags, argv);
   } catch (e) {
     return fail(e);

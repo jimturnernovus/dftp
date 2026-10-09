@@ -61,7 +61,8 @@ matches `CLAUDE.md`.
   and every message handler checks origin, source, the per-load secret and
   the message shape (`client/core/protocol.js`).
 - **Validate at every boundary.** HTTP bodies, files read from disk and
-  messages all go through `client/core/schema.js` or `client/core/protocol.js`.
+  messages all go through `client/core/schema.js`, `client/core/tokens.js`
+  or `client/core/protocol.js`.
 - **Generic errors.** Error replies and logs never echo request bodies,
   headers or file contents.
 - **Comments and strings in plain, neutral English.** Explain why, not what.
@@ -70,6 +71,25 @@ The shared modules in `client/core/` and `layer/core/` are also kept in step
 with another copy by the maintainer. Pull requests that change them are
 welcome; the maintainer may re-apply such a change by hand instead of merging
 it as it is.
+
+## Adding a style source
+
+The style scan has one core (`server/scan/`: the walk, the build of one
+normalised token document, the live-sample merge) and one adapter per
+styling system (`server/scan/adapters/`). Supporting another system means
+adding one adapter file and one line in `server/scan/registry.mjs`; the
+core does not change.
+
+An adapter is a plain object with an `id`, a `rank` (which source names a
+value when two do), `match(relPath, opts)` and
+`extract({path, text, helpers})`. `extract` is pure: text in, data out
+(`tokens`, `usages`, `components`, `diagnostics`; the comment at the top of
+`registry.mjs` has the shapes). It must not touch the file system, the
+network, timers or project code, and must stay linear in the size of the
+input: hand-written readers or fixed regular expressions, never one built
+from the file. Give it a fixture project under `test/fixtures/projects/`,
+unit tests with malformed and oversized input, and a row in the README's
+"What it reads in this release" table.
 
 ## Docs
 

@@ -7,6 +7,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { safeParse, isId } from "../client/core/schema.js";
 import { BUILT_IN_DEVICES, validateDevice, pageIdFromPath, DEVICE_LIMITS } from "../client/core/devices.js";
+import { blankPath } from "./blank.mjs";
 
 export const CONFIG_FILE = "dftp.config.json";
 export const DEFAULT_PORT = 7450;
@@ -14,6 +15,7 @@ export const DEFAULT_LIBRARY_PREFIXES = Object.freeze(["src/components/ui/"]);
 export const DEFAULT_LOC_ATTR = "data-loc";
 export const DEMO_PAGE_DEF = Object.freeze({ id: "active-clients", label: "Active Clients", path: "/", keep: Object.freeze([]) });
 export const DEMO_THEME = Object.freeze({ selector: "html", attribute: "data-theme", dark: "dark", light: "light" });
+export const BLANK_THEME = DEMO_THEME;
 const CONFIG_LIMIT = 64 * 1024;
 const MAX_PAGES = 100;
 
@@ -24,22 +26,23 @@ export class ConfigError extends Error {
   }
 }
 
-const COMMANDS = new Set(["serve", "done", "where", "help"]);
+const COMMANDS = new Set(["serve", "done", "where", "scan", "help"]);
 const VALUE_FLAGS = new Set(["--target", "--root", "--port", "--page", "--host"]);
 const BOOL_FLAGS = new Set(["--demo", "--open", "--no-text", "--debug", "--relax-csp", "--help", "-h", "--version", "-v"]);
 
 // argv without the node binary and script. Returns
-// {cmd, ids[], flags:{demo, target, root, port, pages[], open, noText, debug, relaxCsp, host, help, version}}.
+// {cmd, ids[], flags:{demo, target, root, port, pages[], open, noText, debug, relaxCsp, host, help, version, blank[]}}.
+// blank: one entry per --blank, its name or null.
 export function parseArgs(argv) {
   const flags = {
     demo: false, target: null, root: null, port: null, pages: [], open: false,
-    noText: false, debug: false, relaxCsp: false, host: null, help: false, version: false,
+    noText: false, debug: false, relaxCsp: false, host: null, help: false, version: false, blank: [],
   };
   const ids = [];
   let cmd = "serve";
   let i = 0;
   if (argv.length && !argv[0].startsWith("-")) {
-    if (!COMMANDS.has(argv[0])) throw new ConfigError(`unknown command "${clip(argv[0])}" (use serve, done or where)`);
+    if (!COMMANDS.has(argv[0])) throw new ConfigError(`unknown command "${clip(argv[0])}" (use serve, done, scan or where)`);
     cmd = argv[0];
     i = 1;
   }
@@ -79,12 +82,40 @@ export function parseArgs(argv) {
       else if (name === "--relax-csp") flags.relaxCsp = true;
       else if (name === "--help" || name === "-h") flags.help = true;
       else flags.version = true;
+    } else if (name === "--blank") {
+      // The name is optional: --blank, --blank NAME or --blank=NAME.
+      if (value === null && cmd === "serve" && i + 1 < argv.length && !argv[i + 1].startsWith("-")) value = argv[++i];
+      flags.blank.push(value);
     } else {
       throw new ConfigError(`unknown option "${clip(name)}"; dftp --help lists the options`);
     }
   }
   if (cmd === "help") flags.help = true;
   return { cmd, ids, flags };
+}
+
+// ---------------------------------------------------------------- blank pages
+
+const BLANK_NAME_RE = /^[a-z0-9][a-z0-9-]{0,41}$/;
+export const MAX_BLANK_PAGES = 10;
+
+// The blank pages from --blank flags: "blank" for a bare --blank, and
+// "blank-NAME" for --blank NAME, each served by the frame listener at its
+// own path (server/blank.mjs).
+export function blankPagesFrom(names) {
+  const list = Array.isArray(names) ? names : [];
+  if (list.length > MAX_BLANK_PAGES) throw new ConfigError(`--blank can be given at most ${MAX_BLANK_PAGES} times`);
+  const ids = new Set();
+  return Object.freeze(list.map((name) => {
+    if (name !== null && (typeof name !== "string" || !BLANK_NAME_RE.test(name))) {
+      throw new ConfigError("--blank NAME must be lower-case letters, digits and \"-\" (at most 42), starting with a letter or digit");
+    }
+    const id = name === null ? "blank" : `blank-${name}`;
+    if (!isId(id)) throw new ConfigError("--blank NAME is not usable as a page id");
+    if (ids.has(id)) throw new ConfigError(name === null ? "--blank is given twice" : `--blank ${name} is given twice`);
+    ids.add(id);
+    return Object.freeze({ id, label: name === null ? "Blank page" : `Blank: ${name}`, path: blankPath(id), keep: Object.freeze([]), blank: true });
+  }));
 }
 
 function clip(s) {
@@ -352,20 +383,38 @@ export async function loadConfig({ flags, cwd = process.cwd(), toolDir }) {
 
   let target = null;
   let pages;
+  // Blank pages come after the app's own pages (a target in the config file
+  // counts as a dev server); with no dev server at all they are the only
+  // pages ("blank" mode). Either way the designer starts on the first blank
+  // page when --blank is given.
+  const blanks = blankPagesFrom(flags.blank);
+  let mode = demo ? "demo" : "proxy";
   if (demo) {
     if (flags.target) throw new ConfigError("--demo and --target cannot be used together");
     if (flags.pages.length) throw new ConfigError("--page cannot be used with --demo");
-    pages = Object.freeze([DEMO_PAGE_DEF]);
+    pages = Object.freeze([DEMO_PAGE_DEF, ...blanks]);
   } else {
     const t = flags.target || fc.target;
-    if (!t) throw new ConfigError(`--target is required (the dev server address, such as http://127.0.0.1:5173), or use --demo`);
-    target = validateTarget(t, { avoidPorts: [port, port + 1] });
-    if (flags.pages.length) pages = pagesFromFlags(flags.pages);
-    else pages = fc.pages || Object.freeze([Object.freeze({ id: "home", label: "Home", path: "/", keep: Object.freeze([]) })]);
+    if (!t && blanks.length) {
+      if (flags.pages.length) throw new ConfigError("--page needs a dev server (--target); a blank page needs none");
+      mode = "blank";
+      pages = blanks;
+    } else {
+      if (!t) throw new ConfigError(`--target is required (the dev server address, such as http://127.0.0.1:5173), or use --demo or --blank`);
+      target = validateTarget(t, { avoidPorts: [port, port + 1] });
+      if (flags.pages.length) pages = pagesFromFlags(flags.pages);
+      else pages = fc.pages || Object.freeze([Object.freeze({ id: "home", label: "Home", path: "/", keep: Object.freeze([]) })]);
+      pages = Object.freeze([...pages, ...blanks]);
+    }
+  }
+  const seen = new Set();
+  for (const p of pages) {
+    if (seen.has(p.id)) throw new ConfigError(`page id "${p.id}" is used by a page and by --blank; pick another --blank name`);
+    seen.add(p.id);
   }
   const hostLit = host.includes(":") ? `[${host}]` : host;
   return Object.freeze({
-    mode: demo ? "demo" : "proxy",
+    mode,
     host,
     hostLiteral: hostLit,
     port,
@@ -373,11 +422,14 @@ export async function loadConfig({ flags, cwd = process.cwd(), toolDir }) {
     toolDir: path.resolve(toolDir),
     target,
     pages,
+    startPage: blanks.length ? blanks[0].id : pages[0].id,
     devices: fc.devices,
     libraryPrefixes: fc.libraryPrefixes,
     locAttr: fc.locAttr,
     rootSelector: fc.rootSelector,
-    theme: demo ? DEMO_THEME : fc.theme,
+    // A blank page has a Light / Dark switch of its own unless the project
+    // names a theme setting.
+    theme: demo ? DEMO_THEME : mode === "blank" ? fc.theme || BLANK_THEME : fc.theme,
     captureText: flags.noText ? false : fc.captureText,
     debug: !!flags.debug,
     relaxCsp: !!flags.relaxCsp,

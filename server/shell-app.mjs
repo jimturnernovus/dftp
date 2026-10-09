@@ -11,6 +11,10 @@
 //   POST /api/changes      {page, device, theme, list, tab, seq, base}
 //   POST /api/code         {files:[...]}   -> {code:{file: sha12|null}}
 //   GET  /api/changes-md   CHANGES.md as text
+//   GET  /api/tokens       -> {doc|null, scanning}  the style scan (.dftp/tokens.json)
+//   POST /api/tokens/scan  {}  -> {doc}  scan the project again
+//   POST /api/tokens/sample {page, device, theme, elements, values}  -> {ok, doc}
+//                          merge computed styles from the page (validateSample)
 //
 // Every /api request needs the token header; writes also need the exact shell
 // Origin and a JSON body type (guard.checkApi). No CORS headers are ever sent.
@@ -18,6 +22,7 @@
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { isId, validateSave, validateFiles } from "../client/core/schema.js";
+import { validateSample } from "../client/core/tokens.js";
 import {
   HttpError, splitTarget, hostMatches, checkApi, documentFetchAllowed, readBody, parseJsonBody,
   send, sendJson, sendApiError, sendShellError, headers, TYPES, cookieValues, tokenMatches,
@@ -34,6 +39,9 @@ const API_ROUTES = {
   "/api/changes": ["GET", "POST"],
   "/api/code": ["POST"],
   "/api/changes-md": ["GET"],
+  "/api/tokens": ["GET"],
+  "/api/tokens/scan": ["POST"],
+  "/api/tokens/sample": ["POST"],
 };
 
 export function sessionInfo(ctx) {
@@ -42,7 +50,9 @@ export function sessionInfo(ctx) {
     ns: "dftp",
     mode: cfg.mode,
     frameOrigin: ctx.frameOrigin,
-    pages: cfg.pages.map((p) => ({ id: p.id, label: p.label, path: p.path, keep: [...p.keep] })),
+    pages: cfg.pages.map((p) => ({ id: p.id, label: p.label, path: p.path, keep: [...p.keep], ...(p.blank === true ? { blank: true } : {}) })),
+    // The page the designer opens on (the first blank page with --blank).
+    start: cfg.startPage || cfg.pages[0].id,
     devices: cfg.devices.map((d) => ({ id: d.id, label: d.label, width: d.width, height: d.height })),
     theme: { toggle: !!cfg.theme },
     libraryPrefixes: [...cfg.libraryPrefixes],
@@ -149,6 +159,10 @@ export function createShellApp(ctx) {
       case "POST /api/changes": {
         const r = validateSave(body);
         if (!r.ok) throw new HttpError(400, r.error);
+        // New elements exist only on blank pages.
+        if (r.value.list.some((c) => c.kind === "insert") && !ctx.cfg.pages.some((p) => p.id === r.value.page && p.blank === true)) {
+          throw new HttpError(400, "new elements belong on blank pages");
+        }
         const out = await ctx.store.save(r.value);
         sendJson(req, res, out.status, out.body);
         return;
@@ -163,6 +177,28 @@ export function createShellApp(ctx) {
       case "GET /api/changes-md":
         send(req, res, 200, await ctx.store.buildMd(), headers.api(TYPES.text));
         return;
+      case "GET /api/tokens":
+        sendJson(req, res, 200, await ctx.tokens.get());
+        return;
+      case "POST /api/tokens/scan": {
+        if (!body || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "body: must be an object");
+        const doc = await ctx.tokens.rescan();
+        // CHANGES.md names where the tokens of new elements are defined.
+        if (ctx.cfg.pages.some((p) => p.blank === true)) await ctx.store.rebuildMd().catch(() => {});
+        sendJson(req, res, 200, { doc });
+        return;
+      }
+      case "POST /api/tokens/sample": {
+        const r = validateSample(body);
+        if (!r.ok) throw new HttpError(400, r.error);
+        if (!ctx.cfg.pages.some((p) => p.id === r.value.page) || !ctx.cfg.devices.some((d) => d.id === r.value.device)) {
+          throw new HttpError(400, "unknown page or device");
+        }
+        // A blank page shows the tokens back; sampling it would count them twice.
+        if (ctx.cfg.pages.some((p) => p.id === r.value.page && p.blank === true)) throw new HttpError(400, "blank pages are not sampled");
+        sendJson(req, res, 200, { ok: true, doc: await ctx.tokens.addSample(r.value) });
+        return;
+      }
       default:
         throw new HttpError(404);
     }

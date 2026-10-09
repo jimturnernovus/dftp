@@ -70,9 +70,14 @@ export async function openWindow(browser, app, opts = {}) {
   }
   const page = await context.newPage();
   const posts = [];
+  const samples = [];
   const dialogs = [];
   page.on("request", (r) => {
-    if (r.method() === "POST") posts.push({ url: r.url(), at: Date.now() });
+    if (r.method() !== "POST") return;
+    // Live style samples (the page's computed styles, counted once it
+    // settles) are kept apart: they store no edits.
+    if (new URL(r.url()).pathname === "/api/tokens/sample") samples.push({ url: r.url(), at: Date.now(), body: r.postData() || "" });
+    else posts.push({ url: r.url(), at: Date.now() });
   });
   if (process.env.DFTP_E2E_DEBUG) {
     page.on("console", (m) => process.stdout.write(`[console ${m.type()}] ${m.text()} @ ${m.location().url}\n`));
@@ -89,6 +94,7 @@ export async function openWindow(browser, app, opts = {}) {
     context,
     page,
     posts,
+    samples,
     dialogs,
     // The frame is replaced on every load, so this is looked up each time.
     get frame() {

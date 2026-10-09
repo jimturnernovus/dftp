@@ -89,6 +89,7 @@ function validSession(s) {
       libraryPrefixes: Array.isArray(session.libraryPrefixes) ? session.libraryPrefixes : [],
       changesPath: typeof session.changesPath === "string" ? session.changesPath : ".dftp/CHANGES.md",
       version: typeof session.version === "string" ? session.version : "",
+      start: typeof session.start === "string" ? session.start : "",
     },
   });
 })();

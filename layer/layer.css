@@ -177,3 +177,16 @@ html.dftp-design * {
 .dftp-rail-on .dftp-rail-thumb {
   background: rgba(234, 88, 12, 0.8);
 }
+
+/* Blank pages: the box a dragged element would go into, and where it lands. */
+.dftp-drop {
+  border: calc(2px * var(--dftp-k, 1)) dashed #0d9488;
+  background: rgba(13, 148, 136, 0.06);
+}
+
+.dftp-drop-line {
+  position: fixed;
+  pointer-events: none;
+  border-radius: 999px;
+  background: #0d9488;
+}

@@ -11,7 +11,11 @@
 //
 // Browser and Node.
 
-import { isKey, isLoc, isFilePath, isSha, isTheme, isId, validateChange, validateList, stripControls, LIMITS } from "./schema.js";
+import {
+  isKey, isLoc, isFilePath, isSha, isTheme, isId, validateChange, validateList, stripControls, LIMITS,
+  INSERT_ELEMENTS, checkInsertStyles, isComponentName,
+} from "./schema.js";
+import { validateSample } from "./tokens.js";
 
 export const NONCE_RE = /^[0-9a-f]{32}$/;
 
@@ -30,6 +34,7 @@ export const FRAME_TYPES = Object.freeze([
   "drawer-toggle",
   "need-code",
   "flushed", // answer to "flush": any open text edit has been committed
+  "style-sample", // the page's computed styles, counted (after the page settles, and on "sample-styles")
 ]);
 
 // Shell -> layer.
@@ -50,11 +55,15 @@ export const SHELL_TYPES = Object.freeze([
   "key",
   "edit",
   "flush", // commit an open text edit now (sent before Before, and before a reload)
+  "sample-styles", // count the page's computed styles now; answered with "style-sample"
+  "insert", // blank pages: add a new element (dropped at a point, or into the selected box)
+  "insert-hint", // blank pages: show where a dragged element would land (at: null hides it)
+  "reload-tokens", // blank pages: load the token style sheet again (the style scan changed)
 ]);
 
 // While Before is shown the layer acts on these and nothing else
 // (and on "mode" only when it asks for "use").
-export const BEFORE_TYPES = Object.freeze(["view", "scale", "grid", "theme", "code", "mode"]);
+export const BEFORE_TYPES = Object.freeze(["view", "scale", "grid", "theme", "code", "mode", "reload-tokens"]);
 
 // Keys the shell may forward to the layer.
 export const KEY_ALLOW = Object.freeze([
@@ -75,6 +84,8 @@ export const TOAST_CODES = Object.freeze([
   "undo-empty",
   "redo-empty",
   "limit",           // the change list or the element's key is over a size limit
+  "scaffold-fixed",  // the main container of a blank page is not moved, sized, hidden or re-worded
+  "insert-attach",   // a change cannot move onto a new element, nor a new element's change elsewhere
 ]);
 
 export const MODES = Object.freeze(["design", "use"]);
@@ -283,6 +294,13 @@ export function validateFrameMsg(data, { ns, nonce }) {
       if (!Array.isArray(files) || files.length > LIMITS.files || !files.every(isFilePath)) return null;
       return { type, files: [...new Set(files)] };
     }
+    case "style-sample": {
+      // {elements, values: [{prop, value, count}]}: the shape of a live
+      // sample (tokens.js validateSample) without the page, device and
+      // theme, which the designer window adds from its own state.
+      const r = validateSample({ page: "frame", device: "frame", elements: own(data, "elements"), values: own(data, "values") });
+      return r.ok ? { type, elements: r.value.elements, values: r.value.values } : null;
+    }
     default:
       return null;
   }
@@ -322,7 +340,7 @@ export function validateShellMsg(data, { ns, nonce }) {
       if (!Number.isInteger(dw) || !Number.isInteger(dh) || dw < 1 || dh < 1 || dw > 100000 || dh > 100000) return null;
       return {
         type, list: r.value, mode, view, theme, grid, code, scale,
-        page: { id: page.id, path: pagePath, keep: keep.slice() },
+        page: { id: page.id, path: pagePath, keep: keep.slice(), ...(own(page, "blank") === true ? { blank: true } : {}) },
         device: { id: device.id, width: dw, height: dh },
       };
     }
@@ -379,7 +397,55 @@ export function validateShellMsg(data, { ns, nonce }) {
       }
       return { type, init: out };
     }
+    case "sample-styles":
+    case "reload-tokens":
+      return { type };
+    case "insert":
+      return checkInsertMsg(data);
+    case "insert-hint": {
+      const at = own(data, "at");
+      if (at === undefined || at === null) return { type, at: null };
+      const p = checkPoint(at);
+      return p ? { type, at: p } : null;
+    }
     default:
       return null;
   }
+}
+
+// ---------------------------------------------------------------- new elements (blank pages)
+
+// A point in the frame's own CSS pixels.
+function checkPoint(v) {
+  if (!isObj(v)) return null;
+  const x = own(v, "x");
+  const y = own(v, "y");
+  return finite(x, LIMITS.rect) && finite(y, LIMITS.rect) ? { x, y } : null;
+}
+
+// "insert": {element, styles: {property: token id}, component?, component_file?,
+// at?: {x, y}}. Without `at` the element goes into the selected box (or
+// after the selected new element, or at the end of the page).
+function checkInsertMsg(data) {
+  const element = own(data, "element");
+  if (!INSERT_ELEMENTS.includes(element)) return null;
+  const st = checkInsertStyles(own(data, "styles") ?? {});
+  if (st.error) return null;
+  const out = { type: "insert", element, styles: st.value, at: null };
+  const comp = own(data, "component");
+  const file = own(data, "component_file");
+  if (comp !== undefined) {
+    if (!isComponentName(comp)) return null;
+    out.component = comp;
+    if (file !== undefined) {
+      if (!isFilePath(file)) return null;
+      out.component_file = file;
+    }
+  } else if (file !== undefined) return null;
+  const at = own(data, "at");
+  if (at !== undefined && at !== null) {
+    out.at = checkPoint(at);
+    if (!out.at) return null;
+  }
+  return out;
 }

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Sample studio</title>
+  <link rel="stylesheet" href="assets/site.css">
+  <style>
+    :root { --accent: #0e7490; }
+    body { margin: 0; font-family: Georgia, "Times New Roman", serif; color: #1f2937; background-color: #fafaf9; }
+    h1 { font-size: 2rem; line-height: 1.1; }
+    .button { background: #0e7490; color: white; border-radius: 6px; padding: 10px 20px; }
+    @media (min-width: 640px) { .grid { gap: 24px; } }
+  </style>
+</head>
+<body>
+  <!-- <div style="color: #ff00ff">commented out</div> -->
+  <header class="site-header container">
+    <h1 style="letter-spacing: -0.02em; color: #0e7490">Sample Studio</h1>
+  </header>
+  <main class="grid gap-4">
+    <button class="button primary" style="padding: 8px 16px; box-shadow: 0 2px 6px rgba(15, 23, 42, 0.15)">Get started</button>
+    <p style="color:#6b7280;font-size:14px">Plain words that are never read.</p>
+    <p style="font-family: &quot;Fira Sans&quot;, sans-serif">More words.</p>
+    <script>
+      const sheet = "<style>body { color: #ff0000; }</style>";
+    </script>
+    <textarea>color: #00ff00;</textarea>
+  </main>
+</body>
+</html>

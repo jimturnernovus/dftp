@@ -23,8 +23,15 @@
 // window that owns this frame receives the list and stores it.
 
 import { envelope, validateShellMsg, BEFORE_TYPES } from "./protocol.js";
-import { coerceChange, isKey, isLoc, splitLoc, newChangeId, LIMITS } from "./schema.js";
+import {
+  coerceChange, isKey, isLoc, splitLoc, newChangeId, LIMITS, INSERT_STYLE_PROPS, SCAFFOLD_KEY, isInsertKey, isTokenRef,
+} from "./schema.js";
 import { pageIdentity } from "./devices.js";
+import { TOKEN_LIMITS, SAMPLE_PROPS } from "./tokens.js";
+import {
+  ELEMENTS, insertTree, depthUnder, tokenVar, styleVar, isInsert, INSERT_DEPTH,
+  SCAFFOLD_ATTR, INSERT_ATTR, KIND_ATTR, BOX_ATTR, COMPONENT_ATTR, TOKENS_CSS,
+} from "./blank.js";
 
 const GRIPS = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 const PROPS = [
@@ -371,6 +378,8 @@ export function startLayer(opts) {
   //                   "body" stand in when no ancestor is stamped)
   //   key>~t.w        word w of direct text node t of the element at key
   function keyOf(el) {
+    const ik = insertKeyOf(el);
+    if (ik) return ik;
     const pc = pieceOf(el);
     if (pc && el.parentElement) return `${keyOf(el.parentElement)}>~${pc}`;
     const loc = locOf(el);
@@ -389,6 +398,7 @@ export function startLayer(opts) {
 
   function findEl(key) {
     if (typeof key !== "string" || !key) return null;
+    if (key === SCAFFOLD_KEY || isInsertKey(key)) return insertEl(key);
     const tilde = key.lastIndexOf(">~");
     if (tilde >= 0) {
       const m = /^(\d+)\.(\d+)$/.exec(key.slice(tilde + 2));
@@ -523,6 +533,8 @@ export function startLayer(opts) {
     if (!parent) return null;
     if (pieceOf(parent)) return parent;
     if (!isPage(parent) || isPrivate(parent) || parent.closest(NO_TEXT_SEL)) return null;
+    // A new element's words are not split: its text is one string to write.
+    if (insertKeyOf(parent)) return null;
     if (textHeld(parent)) return "held";
     const ti = directTexts(parent).indexOf(tn);
     const spans = splitText(parent, ti);
@@ -588,6 +600,7 @@ export function startLayer(opts) {
 
   function describe(el) {
     const key = keyOf(el);
+    if (insertKeyOf(el)) return { key, loc: "", occ: 0, path: "", part: false, piece: false };
     const pc = pieceOf(el);
     if (pc && el.parentElement) {
       const parentInfo = describe(el.parentElement);
@@ -1046,6 +1059,7 @@ export function startLayer(opts) {
       applyText(el, null);
       appliedKey.delete(el);
     }
+    removeInserts();
   }
 
   // ---------------------------------------------------------------- finding a change's element again
@@ -1131,6 +1145,7 @@ export function startLayer(opts) {
   //  - Fingerprint changed (the file was edited): search the whole file for
   //    an element with the same tag and words, preferring the closest line.
   function resolve(c) {
+    if (isInsert(c)) return insertEl(c.key);
     const exact = findEl(c.key);
     const lib = isLibChange(c);
     const inScope = (el) => !lib || fileOf(usedInOf(el)) === fileOf(c.used_in);
@@ -1200,6 +1215,7 @@ export function startLayer(opts) {
   function reapplyAll() {
     if (!S.active || S.away || S.view === "before") return;
     restoreClips();
+    syncInserts();
     const order = [...S.changes.values()];
     const found = order.map((c) => {
       let el = resolve(c);
@@ -1295,20 +1311,220 @@ export function startLayer(opts) {
     if (t - lastMutation >= SETTLE_QUIET_MS || t - initAt >= SETTLE_MAX_MS) {
       S.settled = true;
       reapplyAll();
+      scheduleSample();
     } else {
       setTimeout(settleCheck, 150);
     }
   }
 
+  // ---------------------------------------------------------------- style sample
+
+  // The live style sample: how many of the page's rendered elements show
+  // each computed value of the properties in SAMPLE_PROPS (tokens.js), for
+  // the designer's style tokens. Only computed style values are kept; never
+  // text, attribute values or form values. Left out: the layer's own nodes,
+  // words the layer split off, private fields and everything inside an
+  // element marked private, other namespaces (SVG, MathML), elements that
+  // are not rendered, and all of a blank page (its scaffold and new elements
+  // are drawn from the tokens themselves, so counting them would feed the
+  // tokens back into the scan). Text properties count only on elements that
+  // show text of their own (or are text fields, buttons and lists), with
+  // the line height also as a ratio of the font size (a unitless token such
+  // as 1.5 shows as px on the page); a border's color and width only where a
+  // border is drawn, a gap only on flex and grid containers, and a margin
+  // neither on an element that carries a drawn change (the layer may have
+  // set it) nor beyond SAMPLE.marginMax on one side (an auto margin that
+  // centres a box). Bounded by element, visit, time and value counts; the
+  // values sent pass validateSample, or the designer window would drop the
+  // whole message.
+  const SAMPLE = Object.freeze({
+    elements: TOKEN_LIMITS.sampleElements,
+    values: TOKEN_LIMITS.sampleValues,
+    valueLen: TOKEN_LIMITS.sampleValue,
+    visits: 20000,
+    ms: 250,
+    marginMax: 160,
+    delayMs: 400,
+    themeDelayMs: 800,
+    gapMs: 1000,
+  });
+  const SAMPLE_PROP_SET = new Set(SAMPLE_PROPS);
+  const SAMPLE_SKIP = new Set(["head", "script", "style", "link", "meta", "base", "title", "noscript", "template", "slot", "br", "wbr", "iframe", "frame", "object", "embed"]);
+  const SAMPLE_CONTROLS = new Set(["button", "select", "textarea"]);
+  const SAMPLE_SIDES = ["top", "right", "bottom", "left"];
+  const XHTML_NS = "http://www.w3.org/1999/xhtml";
+  // eslint-disable-next-line no-control-regex
+  const SAMPLE_BAD_RE = /[\u0000-\u001F\u007F-\u009F<>\\`{};]/;
+  const PX_RE = /^-?\d+(?:\.\d+)?px$/;
+
+  // A computed color with no alpha: "rgba(..., 0)", or "/ 0" in the newer
+  // color syntaxes.
+  const clearColor = (c) => {
+    if (!c || c === "transparent") return true;
+    const m = /^rgba\([^)]*,\s*([\d.]+)\)$/.exec(c);
+    if (m) return Number(m[1]) === 0;
+    const slash = c.lastIndexOf("/");
+    return slash !== -1 && /^\/\s*0(?:\.0+)?\s*\)$/.test(c.slice(slash));
+  };
+  const zeroLen = (v) => !v || v === "0px" || v === "normal";
+  // Four sides written the way the CSS shorthand would be.
+  const sides4 = (t, r, b, l) => {
+    if (t === r && r === b && b === l) return t;
+    if (t === b && r === l) return `${t} ${r}`;
+    if (r === l) return `${t} ${r} ${b}`;
+    return `${t} ${r} ${b} ${l}`;
+  };
+  // A family list cut at the last whole family that fits.
+  const fitFamilies = (v) => {
+    if (v.length <= SAMPLE.valueLen) return v;
+    const cut = v.slice(0, SAMPLE.valueLen);
+    const at = cut.lastIndexOf(",");
+    return at > 0 ? cut.slice(0, at).trim() : "";
+  };
+  // Whether the element shows text of its own: a text node with more than
+  // white space, or a word the layer split off. The text is not kept.
+  const showsText = (el) => {
+    for (let n = el.firstChild; n; n = n.nextSibling) {
+      if (n.nodeType === 3 && /\S/.test(n.nodeValue)) return true;
+      if (n.nodeType === 1 && pieceOf(n)) return true;
+    }
+    return false;
+  };
+
+  // The page is DFTP's own blank page: the designer says so, or its
+  // generated scaffold is there.
+  const generatedPage = () => S.page.blank === true || !!document.querySelector(`body > main[${SCAFFOLD_ATTR}]`);
+
+  // A line height as a ratio of the font size ("1.5"), or "" when either is
+  // not in px.
+  const lineRatio = (lh, fs) => {
+    if (!PX_RE.test(lh) || !PX_RE.test(fs) || parseFloat(fs) <= 0) return "";
+    const r = Math.round((parseFloat(lh) / parseFloat(fs)) * 1000) / 1000;
+    return r > 0 && r <= 10 ? String(r) : "";
+  };
+
+  function sampleStyles() {
+    if (generatedPage()) return { elements: 0, values: [] };
+    const start = performance.now();
+    const counts = new Map();
+    const add = (prop, raw) => {
+      if (!SAMPLE_PROP_SET.has(prop) || typeof raw !== "string") return;
+      const v = (prop === "font-family" ? fitFamilies(raw.trim()) : raw.trim());
+      if (!v || v.length > SAMPLE.valueLen || SAMPLE_BAD_RE.test(v)) return;
+      const k = `${prop}\u0000${v}`;
+      counts.set(k, (counts.get(k) || 0) + 1);
+    };
+    let elements = 0;
+    let visits = 0;
+    const stack = [document.documentElement];
+    while (stack.length && elements < SAMPLE.elements && visits < SAMPLE.visits) {
+      const el = stack.pop();
+      visits++;
+      if ((visits & 63) === 0 && performance.now() - start > SAMPLE.ms) break;
+      if (!el || el === host || el.namespaceURI !== XHTML_NS || SAMPLE_SKIP.has(el.localName) || pieceOf(el) || isPrivate(el)) continue;
+      let cs;
+      try {
+        cs = window.getComputedStyle(el);
+      } catch {
+        continue;
+      }
+      if (cs.display === "none") continue;
+      for (let i = el.children.length - 1; i >= 0; i--) stack.push(el.children[i]);
+      if (cs.display === "contents" || cs.visibility !== "visible" || el.getClientRects().length === 0) continue;
+      elements++;
+      if (showsText(el) || (el.localName === "input" ? TEXT_INPUT_TYPES.has(String(el.type).toLowerCase()) : SAMPLE_CONTROLS.has(el.localName))) {
+        add("color", cs.color);
+        add("font-family", cs.fontFamily);
+        add("font-size", cs.fontSize);
+        add("font-weight", cs.fontWeight);
+        if (cs.lineHeight !== "normal") {
+          add("line-height", cs.lineHeight);
+          const ratio = lineRatio(cs.lineHeight, cs.fontSize);
+          if (ratio) add("line-height", ratio);
+        }
+        if (!zeroLen(cs.letterSpacing)) add("letter-spacing", cs.letterSpacing);
+      }
+      if (!clearColor(cs.backgroundColor)) add("background-color", cs.backgroundColor);
+      const widths = new Set();
+      const colors = new Set();
+      for (const s of SAMPLE_SIDES) {
+        const style = cs.getPropertyValue(`border-${s}-style`);
+        const w = cs.getPropertyValue(`border-${s}-width`);
+        if (style === "none" || style === "hidden" || zeroLen(w)) continue;
+        widths.add(w);
+        const c = cs.getPropertyValue(`border-${s}-color`);
+        if (!clearColor(c)) colors.add(c);
+      }
+      for (const w of widths) add("border-width", w);
+      for (const c of colors) add("border-color", c);
+      const radius = ["top-left", "top-right", "bottom-right", "bottom-left"].map((c) => cs.getPropertyValue(`border-${c}-radius`));
+      if (!radius.every(zeroLen)) add("border-radius", sides4(...radius));
+      const pad = SAMPLE_SIDES.map((s) => cs.getPropertyValue(`padding-${s}`));
+      if (!pad.every(zeroLen)) add("padding", sides4(...pad));
+      if (!el.hasAttribute(MARK)) {
+        const mar = SAMPLE_SIDES.map((s) => {
+          const v = cs.getPropertyValue(`margin-${s}`);
+          return PX_RE.test(v) && Math.abs(parseFloat(v)) > SAMPLE.marginMax ? "0px" : v;
+        });
+        if (!mar.every(zeroLen)) add("margin", sides4(...mar));
+      }
+      if (/\b(?:flex|grid)\b/.test(cs.display)) {
+        const row = zeroLen(cs.rowGap) ? "0px" : cs.rowGap;
+        const col = zeroLen(cs.columnGap) ? "0px" : cs.columnGap;
+        if (row !== "0px" || col !== "0px") add("gap", row === col ? row : `${row} ${col}`);
+      }
+      if (cs.boxShadow && cs.boxShadow !== "none") add("box-shadow", cs.boxShadow);
+      if (cs.opacity && cs.opacity !== "1") add("opacity", cs.opacity);
+    }
+    const values = [];
+    for (const [k, n] of counts) {
+      const i = k.indexOf("\u0000");
+      values.push({ prop: k.slice(0, i), value: k.slice(i + 1), count: Math.min(n, TOKEN_LIMITS.sampleCount) });
+    }
+    // Most frequent first; the order is fixed so the same page gives the
+    // same message.
+    values.sort((a, b) => b.count - a.count || (a.prop < b.prop ? -1 : a.prop > b.prop ? 1 : 0) || (a.value < b.value ? -1 : a.value > b.value ? 1 : 0));
+    return { elements, values: values.slice(0, SAMPLE.values) };
+  }
+
+  // One sample `delay` ms from now (requests close together share it), at
+  // most one per SAMPLE.gapMs, and only in After on the designer's own page.
+  let sampleTimer = 0;
+  let lastSampleAt = 0;
+  function scheduleSample(delay = SAMPLE.delayMs) {
+    if (sampleTimer) return;
+    const wait = Math.max(delay, lastSampleAt + SAMPLE.gapMs - Date.now(), 0);
+    sampleTimer = setTimeout(() => {
+      sampleTimer = 0;
+      if (!S.active || S.away || S.view === "before") return;
+      lastSampleAt = Date.now();
+      let s;
+      try {
+        s = sampleStyles();
+      } catch {
+        return;
+      }
+      // Nothing counted (a blank page): nothing to send.
+      if (s.elements > 0) post("style-sample", s);
+    }, wait);
+  }
+
   // ---------------------------------------------------------------- the change list
 
   const hasText = (c) => c.text_to !== undefined && c.text_to !== null;
-  const isEmpty = (c) => !c.dx && !c.dy && (c.w === undefined || c.w === null) && (c.h === undefined || c.h === null) && !c.hidden && !hasText(c);
+  // A new element is never empty: adding it is the change.
+  const isEmpty = (c) => !isInsert(c) && !c.dx && !c.dy && (c.w === undefined || c.w === null) && (c.h === undefined || c.h === null) && !c.hidden && !hasText(c);
 
   function changeFor(el) {
+    if (isScaffold(el)) {
+      scaffoldNotice();
+      return null;
+    }
     const key = keyFor(el);
     let c = S.changes.get(key);
     if (c) return c;
+    // A new element whose change is gone (undone) is about to go as well.
+    if (insertKeyOf(el)) return null;
     if (S.changes.size >= LIMITS.changes || !isKey(key)) {
       toast("limit");
       return null;
@@ -1553,6 +1769,8 @@ export function startLayer(opts) {
   }
 
   function labelOf(el) {
+    const ins = insertLabel(el);
+    if (ins) return ins;
     const d = describe(el);
     const m = splitLoc(d.loc);
     const where = m ? ` · ${d.part ? "inside " : ""}${m.file.split("/").pop()}:${m.line}` : "";
@@ -1640,6 +1858,7 @@ export function startLayer(opts) {
   const SENSITIVE_INSIDE = `${PRIVATE_SEL}, [contenteditable=""], [contenteditable="true" i], [contenteditable="plaintext-only" i]`;
 
   function canEditText(el) {
+    if (insertKeyOf(el)) return insertHasText(el);
     if (isPrivate(el) || NO_EDIT_TAGS.has(el.localName)) return false;
     if (el.localName === "input" || el.localName === "textarea") return isBox(el);
     try {
@@ -1802,6 +2021,12 @@ export function startLayer(opts) {
       else select(el);
     }
     if (!S.sel) return;
+    // The main container of a blank page is never dragged; a press in it
+    // can still pick what was hit inside it.
+    if (isScaffold(S.sel) && !S.extra.length) {
+      if (clickPick) S.op = { kind: "pick", clickPick, moved: false };
+      return;
+    }
     const items = selected().map((x) => ({ el: x, c0: snapOfChange(S.changes.get(keyFor(x))) }));
     if (!items.length) return;
     S.op = { kind: "move", items, r0: S.sel.getBoundingClientRect(), x: e.clientX, y: e.clientY, snap: snapshot(), moved: false, clickPick };
@@ -1843,12 +2068,15 @@ export function startLayer(opts) {
       }
       return;
     }
+    if (S.op.kind === "pick") return;
     let ddx = e.clientX - S.op.x;
     let ddy = e.clientY - S.op.y;
     if (!S.op.moved && Math.abs(ddx) < DRAG_START_PX && Math.abs(ddy) < DRAG_START_PX) return;
     if (!S.op.moved) {
       S.op.moved = true;
       pushUndo(S.op.snap);
+      if (S.op.kind === "move") for (const it of S.op.items) ensureBase(it.el);
+      else ensureBase(S.op.el);
     }
     if (S.op.kind === "move") {
       if (e.shiftKey) {
@@ -1905,7 +2133,7 @@ export function startLayer(opts) {
     draw();
   }, true);
 
-  window.addEventListener("pointerup", () => {
+  window.addEventListener("pointerup", (e) => {
     if (!S.op) return;
     const op = S.op;
     S.op = null;
@@ -1919,7 +2147,8 @@ export function startLayer(opts) {
       if (op.kind === "move") {
         for (const el of els) {
           const c = el.isConnected ? S.changes.get(keyFor(el)) : null;
-          if (c && updateDetached(el, c)) regrouped = true;
+          if (!c) continue;
+          if (isInsert(c) ? moveInsertOut(el, c, e.clientX, e.clientY) : updateDetached(el, c)) regrouped = true;
         }
       }
       if (regrouped) {
@@ -2028,11 +2257,14 @@ export function startLayer(opts) {
     for (const x of items) {
       const c = changeFor(x);
       if (!c) continue;
+      ensureBase(x);
       c.dx = clampMove(Math.round((c.dx || 0) + ddx));
       c.dy = clampMove(Math.round((c.dy || 0) + ddy));
       applyTo(x, c);
       touch(x, c);
-      if (updateDetached(x, c)) regrouped = true;
+      // A new element stays in its box when nudged; only a drag moves it
+      // to another one (moveInsertOut).
+      if (!isInsert(c) && updateDetached(x, c)) regrouped = true;
       else if (c.dx || c.dy) unclipFor(x);
     }
     if (regrouped) {
@@ -2079,6 +2311,402 @@ export function startLayer(opts) {
     if (S.active) draw();
   });
 
+  // ---------------------------------------------------------------- new elements (blank pages)
+
+  // On a blank page the body holds one empty page frame, the scaffold. The
+  // palette in the designer window adds elements to it and to the boxes
+  // inside it. Each one is a change of kind "insert" keyed "ins:<id>", and
+  // the change list alone decides what is on the page: a new element is made
+  // here when it is missing, put in its place among its parent's new
+  // elements, and given its token styles (blank.js). Moving, resizing,
+  // hiding, text, undo, Before and reset then work on it as on any element.
+  // The scaffold can be picked (to add elements to it) but never edited.
+  // Only elements this layer made count as new elements.
+  const insertOwned = new WeakSet();
+  const insertStyled = new WeakMap(); // el -> the styles last written on it
+  let fixedNoticeAt = 0;
+  let dropBox = null;
+  let dropLine = null;
+
+  function scaffoldEl() {
+    return S.page.blank === true ? document.querySelector(`body > main[${SCAFFOLD_ATTR}]`) : null;
+  }
+  function blankOn() {
+    return !!scaffoldEl();
+  }
+  function isScaffold(el) {
+    return !!el && el.nodeType === 1 && el === scaffoldEl();
+  }
+  // "scaffold", "ins:<id>", or "" for any other element.
+  function insertKeyOf(el) {
+    if (!el || el.nodeType !== 1 || S.page.blank !== true) return "";
+    if (isScaffold(el)) return SCAFFOLD_KEY;
+    if (!insertOwned.has(el)) return "";
+    const k = `ins:${el.getAttribute(INSERT_ATTR) || ""}`;
+    return isInsertKey(k) ? k : "";
+  }
+  function insertEl(key) {
+    const sc = scaffoldEl();
+    if (!sc) return null;
+    if (key === SCAFFOLD_KEY) return sc;
+    if (!isInsertKey(key)) return null;
+    const el = sc.querySelector(`[${INSERT_ATTR}="${key.slice(4)}"]`);
+    return el && insertOwned.has(el) ? el : null;
+  }
+  function insertKids(box) {
+    return [...box.children].filter((x) => insertOwned.has(x));
+  }
+  function defOf(el) {
+    const kind = el.getAttribute(KIND_ATTR);
+    return Object.prototype.hasOwnProperty.call(ELEMENTS, kind) ? ELEMENTS[kind] : null;
+  }
+  function isBoxEl(el) {
+    if (isScaffold(el)) return true;
+    const def = insertKeyOf(el) ? defOf(el) : null;
+    return !!def && def.box;
+  }
+  function insertHasText(el) {
+    const def = isScaffold(el) ? null : defOf(el);
+    return !!def && def.text !== null;
+  }
+  function insertLabel(el) {
+    const k = insertKeyOf(el);
+    if (!k) return "";
+    if (k === SCAFFOLD_KEY) return "main container of the blank page";
+    const def = defOf(el);
+    return `new ${def ? def.label.toLowerCase() : "element"}`;
+  }
+  function scaffoldNotice() {
+    if (Date.now() - fixedNoticeAt < 1500) return;
+    fixedNoticeAt = Date.now();
+    toast("scaffold-fixed");
+  }
+
+  function makeInsert(c) {
+    const def = ELEMENTS[c.element];
+    const el = document.createElement(def.tag);
+    el.setAttribute(INSERT_ATTR, c.id);
+    el.setAttribute(KIND_ATTR, c.element);
+    if (def.box) el.setAttribute(BOX_ATTR, "");
+    if (c.component) el.setAttribute(COMPONENT_ATTR, c.component);
+    const text = typeof c.text === "string" ? c.text : def.text;
+    if (c.element === "button") el.type = "button";
+    if (c.element === "input") {
+      el.type = "text";
+      el.setAttribute("placeholder", text || "");
+    } else if (def.text !== null) {
+      el.textContent = text || "";
+    }
+    if (c.element === "image") {
+      el.setAttribute("role", "img");
+      el.setAttribute("aria-label", "Image placeholder");
+    }
+    insertOwned.add(el);
+    return el;
+  }
+
+  // Token styles: --dftp-s-<property>: var(--dftp-t-<token>), written only
+  // when they differ from what was written last.
+  function styleInsert(el, c) {
+    const styles = c.styles && typeof c.styles === "object" ? c.styles : {};
+    const want = JSON.stringify(INSERT_STYLE_PROPS.map((p) => (isTokenRef(styles[p]) ? styles[p] : "")));
+    if (insertStyled.get(el) === want) return;
+    insertStyled.set(el, want);
+    for (const p of INSERT_STYLE_PROPS) {
+      const id = Object.prototype.hasOwnProperty.call(styles, p) && isTokenRef(styles[p]) ? styles[p] : "";
+      if (id) el.style.setProperty(styleVar(p), `var(${tokenVar(id)})`);
+      else el.style.removeProperty(styleVar(p));
+    }
+  }
+
+  // Make the page's new elements match the change list. Nothing is written
+  // when they already do, so the redraw this causes ends here.
+  function syncInserts() {
+    const sc = scaffoldEl();
+    if (!sc) return;
+    const { order } = insertTree([...S.changes.values()]);
+    const want = new Map(order.map((o) => [o.c.key, o.c]));
+    const have = new Map();
+    for (const el of sc.querySelectorAll(`[${INSERT_ATTR}]`)) {
+      if (insertOwned.has(el)) have.set(`ins:${el.getAttribute(INSERT_ATTR)}`, el);
+    }
+    for (const [k, el] of have) {
+      const c = want.get(k);
+      if (!c || el.getAttribute(KIND_ATTR) !== c.element || (el.getAttribute(COMPONENT_ATTR) || "") !== (c.component || "")) {
+        el.remove();
+        have.delete(k);
+      }
+    }
+    for (const o of order) {
+      const parentEl = o.parent === SCAFFOLD_KEY ? sc : have.get(o.parent);
+      if (!parentEl) continue;
+      let el = have.get(o.c.key);
+      if (!el) {
+        el = makeInsert(o.c);
+        have.set(o.c.key, el);
+      }
+      const kids = insertKids(parentEl);
+      if (kids[o.pos] !== el) parentEl.insertBefore(el, kids[o.pos] || null);
+      styleInsert(el, o.c);
+    }
+  }
+
+  // The generated token style sheet, loaded again when the style scan has
+  // changed (a rescan), so the new elements show the tokens' new values
+  // without a reload. The new sheet replaces the old one once it has loaded,
+  // so nothing flashes; one that fails to load leaves the old one in place.
+  let tokensRev = 0;
+  function reloadTokens() {
+    if (!blankOn() || !document.head) return;
+    const sheets = [...document.head.querySelectorAll("link[rel=\"stylesheet\"]")].filter((l) => {
+      try {
+        return new URL(l.href, location.href).pathname === TOKENS_CSS;
+      } catch {
+        return false;
+      }
+    });
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = `${TOKENS_CSS}?v=${++tokensRev}`;
+    link.addEventListener("load", () => {
+      for (const old of sheets) old.remove();
+      if (S.active) draw();
+    }, { once: true });
+    link.addEventListener("error", () => link.remove(), { once: true });
+    if (sheets.length) sheets[sheets.length - 1].after(link);
+    else document.head.appendChild(link);
+  }
+
+  function removeInserts() {
+    hideDrop();
+    const sc = document.querySelector(`body > main[${SCAFFOLD_ATTR}]`);
+    if (sc) for (const el of insertKids(sc)) el.remove();
+  }
+
+  // Places among each parent's new elements as 0, 1, 2 ... (list order
+  // breaks ties, as in insertTree).
+  function renumberInserts() {
+    const byParent = new Map();
+    for (const c of S.changes.values()) {
+      if (!isInsert(c)) continue;
+      if (!byParent.has(c.parent)) byParent.set(c.parent, []);
+      byParent.get(c.parent).push(c);
+    }
+    for (const arr of byParent.values()) {
+      arr.sort((a, b) => a.index - b.index);
+      arr.forEach((c, i) => {
+        c.index = i;
+      });
+    }
+  }
+
+  // The keys, plus every new element inside a new box among them: removing
+  // a box removes what it holds.
+  function withInsertsInside(keys) {
+    const out = new Set(keys);
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const c of S.changes.values()) {
+        if (isInsert(c) && out.has(c.parent) && !out.has(c.key)) {
+          out.add(c.key);
+          grew = true;
+        }
+      }
+    }
+    return [...out];
+  }
+
+  // A child the full width of its box stacks; a narrower one sits in a row.
+  const wideIn = (b, box) => b.width >= box.width * 0.8;
+
+  // Where an element dropped at (x, y) goes: the innermost box under the
+  // point, and its place among that box's new elements. skip: an element
+  // being dragged, which is under the pointer itself and is neither a box
+  // to drop into nor a sibling to count.
+  function dropTarget(x, y, skip = null) {
+    const sc = scaffoldEl();
+    if (!sc) return null;
+    let hit;
+    try {
+      hit = skip ? document.elementsFromPoint(x, y).find((n) => n !== host && !skip.contains(n)) || null : document.elementFromPoint(x, y);
+    } catch {
+      hit = null;
+    }
+    let box = sc;
+    for (let n = hit; n && n !== sc && n !== document.documentElement; n = n.parentElement) {
+      if (isBoxEl(n)) {
+        box = n;
+        break;
+      }
+    }
+    const r = box.getBoundingClientRect();
+    const kids = insertKids(box).filter((k) => k !== skip);
+    let index = kids.length;
+    for (let i = 0; i < kids.length; i++) {
+      const b = kids[i].getBoundingClientRect();
+      if (b.width === 0 && b.height === 0) continue;
+      const before = y < b.top || (y <= b.bottom && (wideIn(b, r) ? y < b.top + b.height / 2 : x < b.left + b.width / 2));
+      if (before) {
+        index = i;
+        break;
+      }
+    }
+    return { box, parent: insertKeyOf(box), index };
+  }
+
+  // Where a clicked palette element goes: into the selected box, after the
+  // selected new element, or at the end of the page. A box of the same kind
+  // as the selected one goes after it (cards side by side, not nested).
+  function clickTarget(element) {
+    const sc = scaffoldEl();
+    if (!sc) return null;
+    const sel = S.sel && S.sel.isConnected ? S.sel : null;
+    const k = sel ? insertKeyOf(sel) : "";
+    if (k && isBoxEl(sel) && (k === SCAFFOLD_KEY || sel.getAttribute(KIND_ATTR) !== element)) return { box: sel, parent: k, index: insertKids(sel).length };
+    const c = k ? S.changes.get(k) : null;
+    if (c && isInsert(c)) return { box: insertEl(c.parent) || sc, parent: c.parent, index: c.index + 1 };
+    return { box: sc, parent: SCAFFOLD_KEY, index: insertKids(sc).length };
+  }
+
+  // How many levels of new elements a new element holds (0: none).
+  function insertHeight(key, depth = 0) {
+    let h = 0;
+    if (depth > INSERT_DEPTH) return h;
+    for (const x of S.changes.values()) if (isInsert(x) && x.parent === key) h = Math.max(h, 1 + insertHeight(x.key, depth + 1));
+    return h;
+  }
+
+  // A new element dragged entirely out of its box goes where it was
+  // dropped: into the box under the pointer (or the page itself), at that
+  // place, with the move cleared. It is never kept in its old box as a
+  // detached offset. A box it cannot go into (itself, one of its own, or
+  // one nested too deep) leaves it on the page. True when it moved.
+  function moveInsertOut(el, c, x, y) {
+    if (c.hidden || !(c.dx || c.dy) || c.parent === SCAFFOLD_KEY) return false;
+    const box = insertEl(c.parent);
+    if (!box || !disjoint(el.getBoundingClientRect(), box.getBoundingClientRect())) return false;
+    const sc = scaffoldEl();
+    if (!sc) return false;
+    let t = dropTarget(x, y, el);
+    if (t && t.parent === c.parent) return false;
+    const all = [...S.changes.values()];
+    const own = new Set(withInsertsInside([c.key]));
+    if (!t || !t.parent || own.has(t.parent) || depthUnder(all, t.parent) < 0 || depthUnder(all, t.parent) + insertHeight(c.key) >= INSERT_DEPTH) {
+      t = { parent: SCAFFOLD_KEY, index: insertKids(sc).length };
+    }
+    for (const o of all) if (o !== c && isInsert(o) && o.parent === t.parent && o.index >= t.index) o.index++;
+    c.parent = t.parent;
+    c.index = t.index;
+    c.dx = 0;
+    c.dy = 0;
+    delete c.detached;
+    delete c.container;
+    renumberInserts();
+    return true;
+  }
+
+  // A new element filled in from another screen size starts without a
+  // recorded box; its first move or resize records the one it has on this
+  // size.
+  function ensureBase(el) {
+    const c = el ? S.changes.get(keyFor(el)) : null;
+    if (!c || !isInsert(c) || c.base) return;
+    const r = el.getBoundingClientRect();
+    c.base = { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+  }
+
+  function insertFrom(m) {
+    if (!designing() || !blankOn()) return;
+    // An open text editor is saved first: it belongs to the element it was
+    // opened on, and would otherwise stay on screen over the new one.
+    if (editing) saveEditor();
+    const t = m.at ? dropTarget(m.at.x, m.at.y) : clickTarget(m.element);
+    if (!t || !t.parent) return;
+    const all = [...S.changes.values()];
+    const inserts = all.filter(isInsert);
+    const depth = depthUnder(all, t.parent);
+    if (depth < 0 || depth >= INSERT_DEPTH || inserts.length >= LIMITS.inserts || S.changes.size >= LIMITS.changes) {
+      toast("limit");
+      return;
+    }
+    pushUndo();
+    for (const c of inserts) if (c.parent === t.parent && c.index >= t.index) c.index++;
+    const ids = new Set(all.map((x) => x.id));
+    let id = newChangeId();
+    while (ids.has(id)) id = newChangeId();
+    const def = ELEMENTS[m.element];
+    const c = {
+      id, key: `ins:${id}`, kind: "insert", element: m.element, tag: def.tag, parent: t.parent, index: t.index,
+      styles: { ...m.styles }, dx: 0, dy: 0, w: null, h: null, hidden: false, at: now(),
+    };
+    if (def.text !== null) c.text = def.text;
+    if (m.component) {
+      c.component = m.component;
+      if (m.component_file) c.component_file = m.component_file;
+    }
+    S.changes.set(c.key, c);
+    renumberInserts();
+    remeasure = true;
+    hideDrop();
+    reapplyAll();
+    const el = insertEl(c.key);
+    if (el) {
+      const r = el.getBoundingClientRect();
+      c.base = { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+      markShape(el, c);
+      select(el);
+    }
+    commit();
+  }
+
+  function hideDrop() {
+    hide(dropBox);
+    hide(dropLine);
+  }
+
+  // While an element is dragged over the preview: the box it would go into,
+  // and a line where it would land.
+  function showDrop(at) {
+    if (!at || !designing() || !blankOn() || !wrap) {
+      hideDrop();
+      return;
+    }
+    if (editing) saveEditor();
+    if (!dropBox) {
+      dropBox = div("dftp-box dftp-drop");
+      dropLine = div("dftp-drop-line");
+      wrap.insertBefore(dropBox, label);
+      wrap.insertBefore(dropLine, label);
+    }
+    const t = dropTarget(at.x, at.y);
+    if (!t) {
+      hideDrop();
+      return;
+    }
+    const r = t.box.getBoundingClientRect();
+    place(dropBox, r);
+    const kids = insertKids(t.box);
+    const shown = (x) => {
+      const b = x.getBoundingClientRect();
+      return b.width > 0 || b.height > 0;
+    };
+    const next = kids.slice(t.index).find(shown);
+    const prev = kids.slice(0, t.index).reverse().find(shown);
+    const k = 1 / (S.scale || 1);
+    const th = Math.max(2, Math.round(3 * k));
+    let line;
+    if (next) {
+      const b = next.getBoundingClientRect();
+      line = wideIn(b, r) ? { left: b.left, top: b.top - th, width: b.width, height: th } : { left: b.left - th, top: b.top, width: th, height: b.height };
+    } else if (prev) {
+      const b = prev.getBoundingClientRect();
+      line = wideIn(b, r) ? { left: b.left, top: b.bottom, width: b.width, height: th } : { left: b.right, top: b.top, width: th, height: b.height };
+    } else {
+      line = { left: r.left + 8 * k, top: r.top + 8 * k, width: Math.max(th, r.width - 16 * k), height: th };
+    }
+    place(dropLine, line);
+  }
+
   // ---------------------------------------------------------------- edits from the designer window
 
   function undo() {
@@ -2101,7 +2729,7 @@ export function startLayer(opts) {
     commit();
   }
   function resetKeys(keys) {
-    const ks = keys.filter((k) => S.changes.has(k));
+    const ks = withInsertsInside(keys).filter((k) => S.changes.has(k));
     if (!ks.length) return;
     remeasure = true;
     pushUndo();
@@ -2114,6 +2742,7 @@ export function startLayer(opts) {
         appliedKey.delete(el);
       }
     }
+    renumberInserts();
     reapplyAll();
     commit();
   }
@@ -2142,6 +2771,10 @@ export function startLayer(opts) {
     if (!c) return;
     if (!el) {
       toast("nothing-selected");
+      return;
+    }
+    if (isInsert(c) || insertKeyOf(el)) {
+      toast("insert-attach");
       return;
     }
     const k = keyOf(el);
@@ -2315,6 +2948,9 @@ export function startLayer(opts) {
       case "theme":
         applyTheme(m.theme);
         draw();
+        // The page's colors change with the theme: count them again once
+        // its transitions have run.
+        scheduleSample(SAMPLE.themeDelayMs);
         break;
       case "code":
         onCode(m.code);
@@ -2356,6 +2992,18 @@ export function startLayer(opts) {
         break;
       case "edit":
         if (S.mode === "design") openEditor();
+        break;
+      case "sample-styles":
+        scheduleSample(0);
+        break;
+      case "insert":
+        insertFrom(m);
+        break;
+      case "insert-hint":
+        showDrop(m.at);
+        break;
+      case "reload-tokens":
+        reloadTokens();
         break;
       default:
         break;
@@ -2433,7 +3081,7 @@ export function startLayer(opts) {
 
   if (opts.debug === true) {
     Object.defineProperty(window, "__dftp", {
-      value: Object.freeze({ S, reapplyAll, findEl, keyOf, list, editorRect: () => (editing ? editor.getBoundingClientRect().toJSON() : null) }),
+      value: Object.freeze({ S, reapplyAll, findEl, keyOf, list, sample: sampleStyles, editorRect: () => (editing ? editor.getBoundingClientRect().toJSON() : null) }),
       configurable: true,
     });
   }
