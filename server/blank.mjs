@@ -9,11 +9,20 @@
 // gradient or an easing curve, no brace, semicolon, backslash, comment, "@",
 // "!" or single quote, double quotes only in pairs (font names) and balanced
 // parentheses. Anything else is left out.
+//
+// Object styles (the whole look of the project's buttons, cards ...) become
+// one rule each, keyed by the object's name, which sets the element's
+// --dftp-s-<property> values: a token's variable for a token-named value,
+// else the normalised value written back by css-values.js and passed
+// through the same filter. Names are made of validated slugs only.
 
-import { validateTokensDoc } from "../client/core/tokens.js";
-import { formatValue } from "../client/core/css-values.js";
-import { isId } from "../client/core/schema.js";
-import { tokenVar, styleVar, themeTokens, SCAFFOLD_ATTR, KIND_ATTR, BOX_ATTR, TOKENS_CSS } from "../client/core/blank.js";
+import { validateTokensDoc, OBJECT_PROP_LIST } from "../client/core/tokens.js";
+import { formatValue, formatObjectValue } from "../client/core/css-values.js";
+import { isId, objectRef } from "../client/core/schema.js";
+import {
+  tokenVar, styleVar, themeTokens, hasDarkValues, darkSafe, OBJECT_COLOR_PROPS, SCAFFOLD_ATTR, KIND_ATTR, BOX_ATTR, OBJECT_ATTR, TOKENS_CSS,
+} from "../client/core/blank.js";
+import { BUILT_IN_DEVICES } from "../client/core/devices.js";
 import { layerTag } from "./inject.mjs";
 
 export const BLANK_PREFIX = "/__dftp/blank/";
@@ -162,25 +171,25 @@ function baseRules() {
     rule(el("button"), [
       "display: inline-flex;", "align-items: center;", "justify-content: center;", "justify-self: start;", "align-self: flex-start;",
       `padding-block: ${S("padding-block", "0.5rem")};`, `padding-inline: ${S("padding-inline", "1rem")};`,
-      "border-style: solid;", `border-width: ${S("border-width", "0px")};`, `border-color: ${S("border-color", "transparent")};`,
-      `border-radius: ${S("border-radius", "var(--dftp-radius, 8px)")};`,
-      `background: ${S("background", "var(--dftp-color-primary, #2563eb)")};`,
+      `border-style: ${S("border-style", "solid")};`, `border-width: ${S("border-width", "0px")};`, `border-color: ${S("border-color", "transparent")};`,
+      `border-radius: ${S("border-radius", "var(--dftp-radius, 8px)")};`, "height: auto;", `min-height: ${S("height", "auto")};`,
+      `gap: ${S("gap", "normal")};`, `background: ${S("background", "var(--dftp-color-primary, #2563eb)")};`,
       ...type("0.875rem", "600", "1.25").map((d) => (d.startsWith("color:") ? `color: ${S("color", "var(--dftp-on-primary, #ffffff)")};` : d)),
       `box-shadow: ${S("box-shadow", "none")};`, "cursor: pointer;",
     ]),
     rule(el("input"), [
       "display: block;", "width: 100%;", "max-width: 28rem;",
       `padding-block: ${S("padding-block", "0.5rem")};`, `padding-inline: ${S("padding-inline", "0.75rem")};`,
-      "border-style: solid;", `border-width: ${S("border-width", "1px")};`,
+      `border-style: ${S("border-style", "solid")};`, `border-width: ${S("border-width", "1px")};`,
       `border-color: ${S("border-color", `var(--dftp-color-border, ${SOFT_LINE})`)};`,
-      `border-radius: ${S("border-radius", "var(--dftp-radius, 8px)")};`,
-      `background: ${S("background", "var(--dftp-color-surface, transparent)")};`,
+      `border-radius: ${S("border-radius", "var(--dftp-radius, 8px)")};`, "height: auto;", `min-height: ${S("height", "auto")};`,
+      `background: ${S("background", "var(--dftp-color-surface, transparent)")};`, `box-shadow: ${S("box-shadow", "none")};`,
       ...type("1rem", "400", "1.5"),
     ]),
     rule(el("card"), [
       "display: flex;", "flex-direction: column;", `gap: ${S("gap", "0.75rem")};`,
       `padding-block: ${S("padding-block", "1.5rem")};`, `padding-inline: ${S("padding-inline", "1.5rem")};`,
-      "border-style: solid;", `border-width: ${S("border-width", "1px")};`,
+      `border-style: ${S("border-style", "solid")};`, `border-width: ${S("border-width", "1px")};`,
       `border-color: ${S("border-color", `var(--dftp-color-border, ${SOFT_LINE})`)};`,
       `border-radius: ${S("border-radius", "var(--dftp-radius, 12px)")};`,
       `background: ${S("background", "var(--dftp-color-surface, transparent)")};`,
@@ -192,9 +201,10 @@ function baseRules() {
       `background: ${S("background", "var(--dftp-placeholder, color-mix(in srgb, currentColor 10%, transparent))")};`,
     ]),
     rule(el("divider"), [
-      "width: 100%;", "height: 0;", "border: 0;", "border-top-style: solid;",
+      "width: 100%;", `height: ${S("height", "0px")};`, "border: 0;", `border-top-style: ${S("border-style", "solid")};`,
       `border-top-width: ${S("border-width", "1px")};`,
       `border-top-color: ${S("border-color", `var(--dftp-color-border, ${SOFT_LINE})`)};`,
+      `background: ${S("background", "transparent")};`,
     ]),
     rule(el("section"), [
       "display: flex;", "flex-direction: column;", `gap: ${S("gap", "var(--dftp-space-md, 16px)")};`,
@@ -210,9 +220,70 @@ function baseRules() {
   ];
 }
 
+// One rule per recorded object style: the values a new element that copies
+// it takes (names: the token variables the sheet defines). Then, for an
+// object whose look differs on narrower screen sizes (its screens), a rule
+// per size inside a media query that holds below the middle between that
+// size's width and the next wider one's, from the widest down; each states
+// every property that differs on any size ("initial" where the size has no
+// value: the base look). Last, when the project has a dark theme (dsel:
+// where it applies, or the system setting), the colors that hold in the
+// light theme only are set to "initial" there, so the base look, drawn
+// from the role tokens with their dark values, takes their place.
+function objectRules(doc, names, { dsel, devices }) {
+  const out = [];
+  const dark = hasDarkValues(doc);
+  const widths = new Map();
+  for (const d of Array.isArray(devices) ? devices : []) {
+    if (d && isId(d.id) && Number.isInteger(d.width) && d.width > 0 && d.width <= 10000) widths.set(d.id, d.width);
+  }
+  const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+  const text = (prop, v) => (typeof v === "string"
+    ? (names.has(tokenVar(v)) ? `var(${tokenVar(v)})` : "")
+    : safeCssValue(formatObjectValue(prop, v)));
+  for (const o of doc && Array.isArray(doc.objects) ? doc.objects : []) {
+    const ref = objectRef(o);
+    if (!ref) continue;
+    const sel = `[${KIND_ATTR}][${OBJECT_ATTR}="${ref}"]`;
+    const decls = [];
+    for (const prop of OBJECT_PROP_LIST) {
+      if (!own(o.style, prop)) continue;
+      const t = text(prop, o.style[prop]);
+      if (t) decls.push(`  ${styleVar(prop)}: ${t};`);
+    }
+    if (decls.length) out.push(`${sel} {\n${decls.join("\n")}\n}`);
+    const screens = o.screens && typeof o.screens === "object" ? o.screens : {};
+    const sizes = Object.keys(screens).filter((id) => widths.has(id)).sort((a, b) => widths.get(b) - widths.get(a));
+    const varies = OBJECT_PROP_LIST.filter((p) => sizes.some((id) => own(screens[id], p)));
+    for (const id of sizes) {
+      const w = widths.get(id);
+      const wider = [...widths.values()].filter((x) => x > w);
+      if (!wider.length) continue;
+      const below = Math.round(((w + Math.min(...wider)) / 2) * 100) / 100;
+      const list = varies.map((p) => {
+        const v = own(screens[id], p) ? screens[id][p] : own(o.style, p) ? o.style[p] : null;
+        return `    ${styleVar(p)}: ${(v === null ? "" : text(p, v)) || "initial"};`;
+      });
+      out.push(`@media (width < ${below}px) {\n  ${sel} {\n${list.join("\n")}\n  }\n}`);
+    }
+    if (dark) {
+      const looks = [o.style, ...sizes.map((id) => screens[id])];
+      const lightOnly = OBJECT_COLOR_PROPS.filter((p) => looks.some((st) => own(st, p) && !darkSafe(doc, p, st[p])));
+      if (lightOnly.length) {
+        const list = lightOnly.map((p) => `${styleVar(p)}: initial;`);
+        out.push(dsel ? `${dsel} ${sel} {\n${list.map((d) => `  ${d}`).join("\n")}\n}`
+          : `@media (prefers-color-scheme: dark) {\n  ${sel} {\n${list.map((d) => `    ${d}`).join("\n")}\n  }\n}`);
+      }
+    }
+  }
+  return out;
+}
+
 // The style sheet for blank pages from a tokens document (or null).
 // opts.theme: the designer's theme setting, for where dark values apply.
-export function tokenStylesheet(input, { theme = null } = {}) {
+// opts.devices: the designer's screen sizes ([{id, width}]), for object
+// styles that differ by screen size.
+export function tokenStylesheet(input, { theme = null, devices = BUILT_IN_DEVICES } = {}) {
   const r = input ? validateTokensDoc(input) : null;
   const doc = r && r.ok ? r.value : null;
   const light = [];
@@ -281,7 +352,7 @@ export function tokenStylesheet(input, { theme = null } = {}) {
   const dsel = darkSelector(theme);
   const block = (sel, decls) => `${sel} {\n${decls.map((d) => `  ${d}`).join("\n")}\n}`;
   const scaffold = `[${SCAFFOLD_ATTR}]`;
-  const props = [...new Set(baseRules().join("\n").match(/--dftp-s-[a-z-]+/g) || [])];
+  const props = [...new Set([...(baseRules().join("\n").match(/--dftp-s-[a-z-]+/g) || []), ...OBJECT_PROP_LIST.map(styleVar)])];
 
   const out = [
     "/* Generated by DFTP for blank pages from .dftp/tokens.json. Rebuilt on every request; do not edit. */",
@@ -322,6 +393,7 @@ export function tokenStylesheet(input, { theme = null } = {}) {
       "opacity: 0.7;", "font-size: 14px;", "text-align: center;",
     ]),
     ...baseRules(),
+    ...objectRules(doc, names, { dsel, devices }),
     `@media (width < ${lg}px) {\n${block(scaffold, ["grid-template-columns: repeat(6, minmax(0, 1fr));"])}\n${block(`[${KIND_ATTR}="grid"]`, ["grid-template-columns: repeat(2, minmax(0, 1fr));"])}\n}`,
     `@media (width < ${md}px) {\n${block(scaffold, ["display: flex;", "flex-direction: column;", "padding: var(--dftp-space-md);"])}\n${block(`[${KIND_ATTR}="grid"]`, ["grid-template-columns: minmax(0, 1fr);"])}\n}`,
   );

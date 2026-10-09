@@ -22,7 +22,9 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { FORMAT_ID, FORMAT_VERSION, isId, isChangeId, safeParse, validateDoc } from "../client/core/schema.js";
-import { validateTokensDoc } from "../client/core/tokens.js";
+import { validateTokensDoc, OBJECT_PROP_LIST } from "../client/core/tokens.js";
+import { formatObjectValue } from "../client/core/css-values.js";
+import { objectRef } from "../client/core/schema.js";
 import { changesMd } from "../client/core/spec.js";
 import { filesOf, createFingerprinter } from "./fingerprint.mjs";
 
@@ -375,10 +377,8 @@ export async function openStore(opts) {
   // Where each token is defined, for the styles of new elements in
   // CHANGES.md: {id: [{name, file, line}]} from tokens.json, or undefined
   // when no change file holds a new element or there is no valid scan.
-  async function tokenSources(docs) {
-    if (!docs.some((d) => d.list.some((c) => c.kind === "insert"))) return undefined;
-    const doc = await loadTokens();
-    if (!doc) return undefined;
+  function tokenSources(docs, doc) {
+    if (!doc || !docs.some((d) => d.list.some((c) => c.kind === "insert"))) return undefined;
     const out = Object.create(null);
     for (const t of doc.tokens) {
       // Each name once (a variable defined for light and dark is one name),
@@ -395,13 +395,42 @@ export async function openStore(opts) {
     return out;
   }
 
+  // The object styles new elements copy, for CHANGES.md: {name: {count,
+  // found: [{name, file, line}], look: [{prop, text, token}], screens:
+  // [{device, look}]}} from tokens.json (only the names the change files
+  // use), {} when the scan has none of them, or undefined when no new
+  // element copies one or there is no valid scan. token: the text is a
+  // token id (CHANGES.md quotes every other value).
+  function objectInfo(docs, doc) {
+    const refs = new Set();
+    for (const d of docs) for (const c of d.list) if (c.kind === "insert" && c.object) refs.add(objectRef(c.object));
+    refs.delete("");
+    if (!refs.size || !doc) return undefined;
+    const out = Object.create(null);
+    for (const o of doc.objects || []) {
+      const ref = objectRef(o);
+      if (!refs.has(ref)) continue;
+      const found = o.sources.filter((x) => x.file).slice(0, 3).map((x) => ({ name: x.name || "", file: x.file, line: x.line }));
+      const lookOf = (style) => OBJECT_PROP_LIST.filter((p) => Object.prototype.hasOwnProperty.call(style, p)).map((p) => {
+        const v = style[p];
+        return typeof v === "string" ? { prop: p, text: v, token: true } : { prop: p, text: formatObjectValue(p, v), token: false };
+      }).filter((x) => x.text);
+      const screens = Object.keys(o.screens || {}).map((device) => ({ device, look: lookOf(o.screens[device]) })).filter((x) => x.look.length);
+      out[ref] = { count: o.count, found, look: lookOf(o.style), screens };
+    }
+    return out;
+  }
+
   async function buildMd() {
     const { docs, unreadable } = await readAll();
     const files = filesOf(docs.flatMap((d) => d.list));
     const code = opts.fingerprint ? await opts.fingerprint.hashMany(files) : undefined;
-    const tokens = await tokenSources(docs);
+    const scan = docs.some((d) => d.list.some((c) => c.kind === "insert")) ? await loadTokens() : null;
+    const tokens = tokenSources(docs, scan);
+    const objects = objectInfo(docs, scan);
     return changesMd(docs, {
       tokens,
+      objects,
       notes: [
         `Rewritten on every save by DFTP (Designer for the Page) ${version} at ${stamp(now())}. Do not edit by hand.`,
         "How to apply them: see CLAUDE.md in the DFTP folder, \"Applying changes\". Paths are relative to the project root.",

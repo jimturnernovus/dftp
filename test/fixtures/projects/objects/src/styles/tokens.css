@@ -1,0 +1,13 @@
+:root {
+  --color-primary: #2563eb;
+  --color-primary-foreground: #ffffff;
+  --color-surface: #ffffff;
+  --color-text: #111827;
+  --color-border: #d1d5db;
+  --radius-md: 8px;
+  --space-2: 8px;
+  --space-4: 16px;
+  --font-sans: "Inter", system-ui, sans-serif;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.12);
+  --card-radius: 12px;
+}

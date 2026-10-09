@@ -17,7 +17,10 @@ export function collectUsages(parsed, pos, helpers, out) {
       out.diagnostics.push({ code: "value-too-long", line });
       continue;
     }
-    out.usages.push({ prop: d.prop, raw: d.value, line, col, selector: d.ctx.rules.length ? d.ctx.rules[d.ctx.rules.length - 1] : "" });
+    const u = { prop: d.prop, raw: d.value, line, col, selector: d.ctx.rules.length ? d.ctx.rules[d.ctx.rules.length - 1] : "" };
+    // Inside a media query: true for some screens only.
+    if (d.ctx.media.length) u.narrow = true;
+    out.usages.push(u);
   }
   for (const b of parsed.blocks) {
     if (b.name !== "media") continue;

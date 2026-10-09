@@ -195,8 +195,10 @@ or numbers; lengths as a number and a unit, `calc()` of lengths worked out)
 and as written, its dark-mode value where the project has
 one, the token it refers to, a guessed role (primary, text, background,
 border ...), every file and line it comes from, and how often it is used.
-The file also holds spacing, font-size and radius scales, breakpoints, and
-the shared components found in `libraryPrefixes`.
+The file also holds spacing, font-size and radius scales, breakpoints, the
+shared components found in `libraryPrefixes`, and object styles: the whole
+look of your buttons, cards, text boxes, badges, avatars, links, headings,
+body text and dividers (see [Object styles](#object-styles)).
 
 ### What it reads in this release
 
@@ -226,9 +228,7 @@ blank page uses a plain look wherever a token is missing:
   code, including class names put together at run time;
 - CSS-in-JS: styled-components, Emotion, and style objects in JS, JSX and
   TSX;
-- SVG and canvas drawing code (fills, strokes, shapes);
-- object styles: the whole look of your buttons, cards, inputs, badges and
-  avatars, for new elements to copy exactly.
+- SVG and canvas drawing code (fills, strokes, shapes).
 
 ### Running it
 
@@ -246,6 +246,7 @@ Roles: background color.background #ffffff; text color.foreground #0a0a0a; prima
 Scales (px): spacing 4 8 12 16 20 24 32 40 48 64 80 96; font size 14 18; radius 6 10
 Breakpoints: md 768, 3xl 1920
 Components: Button (src/components/ui/button.jsx), Card (src/components/ui/card.jsx)
+Object styles: card default; text body
 Diagnostics: 0
 Wrote .dftp/tokens.json
 ```
@@ -286,7 +287,66 @@ A sample is taken only in After, on one of the designer's pages (not
 after the preview has moved to another address), never while Before is
 showing and never on a blank page (its look comes from your tokens). It holds at most 400 distinct values of up to
 200 characters each, and the last 12 samples (one per page, screen size and
-theme) are kept in `tokens.json` under `live`.
+theme) are kept in `tokens.json` under `live`. The same walk records the
+page's object styles (below).
+
+### Object styles
+
+Besides single values, DFTP records the whole look of the common things on
+your pages, so a new element on a blank page can copy it exactly:
+
+| kind | variants | recognised by |
+|---|---|---|
+| `button` | `primary`, `secondary`, `ghost` | `<button>`, button inputs, `role="button"`, and links drawn as buttons, at least 24 px high and with a label (not a bar over 480 px wide that opens a section or holds its label at one side, such as an accordion header); primary when filled with a color that stands out, secondary when filled faintly or only outlined, ghost otherwise (colors in any syntax, `oklch()` included). Switches, check boxes, radio buttons, tabs, select triggers, menu items and other controls drawn on a `<button>` (by their `role`) are not buttons |
+| `input` | `text`, `select`, `textarea` | text boxes (not password, hidden or card fields), selects and text areas |
+| `heading` | `h1`, `h2`, `h3` | the tag |
+| `text` | `body` | paragraphs (`<p>`) |
+| `link` | `default` | links with text that are not drawn as buttons |
+| `card` | `default` | a rounded block that stands out from what is behind it by its fill, outline or shadow, padded itself or by its first or last section (a card body); never a navigation bar, header, footer, aside, form, alert, status message, dialog or tooltip, nor anything fixed or sticky |
+| `badge` | `badge`, `pill` | a small rounded element with a fill or an outline and a short text (pill when fully rounded) |
+| `avatar` | `image`, `initials` | a round, square-ish element at least 24 px wide (radius at least 40% of its width) showing a picture, or one to three letters in a font that draws letters; step numbers, counters on a button's corner and icons in circles (an icon font at any depth, or an SVG) are left out |
+| `divider` | `default` | `<hr>`, `role="separator"`, or a thin line drawn by a fill or one border |
+
+An element drawn see-through (`opacity` below 1, such as a faint `<hr>`) is
+recorded with that opacity in its colors. A fully round corner written as a
+huge length (`calc(infinity * 1px)`) is kept as 9999 px, and shadow layers
+that draw nothing (the resting layers some frameworks put in every shadow)
+are left out.
+
+Each record is a bundle of the properties that kind uses (fill, text color,
+border width, style and color, radius, shadow, padding, gap, height, font
+family, size and weight, line height, letter spacing), each named by a
+token id when a token has that value and kept as a normalised value
+otherwise, with how many elements share it. A token is used only when it
+fits: one named for that kind of element and property first (`--card` for
+a card's fill, `--btn-padding-y` for a button's), never one named for
+another kind or another part of the page (a badge's weight for a heading,
+a navigation link's padding for a button), and a height, font size or
+padding only from a token named for that use. They come from two places:
+
+- **The page** (`source: "live"`): the live sample counts the computed look
+  of every element it recognises; the most common look of each variant is
+  kept (`card`, `link`, `text` and `divider` keep their three most common
+  looks as `default`, `default-2` and `default-3`). A sample sends at most
+  60 looks, three per kind and variant, and only samples under the light
+  theme are used. A look is taken from the widest screen size that shows
+  it, with its count there (the same elements seen at another size are not
+  counted again); what a narrower screen size shows differently is kept
+  with it as `screens` (`{"phone": {"font-size": ...}}`). A look that
+  matches one from your files also names that rule or variable.
+- **Your files** (`source: "static"`): rules whose selector names one such
+  thing in its resting state (`.btn`, `.btn-primary`, `button.secondary`,
+  `.card`, `.form-control`, `input`, `h1`, `a`, `hr`, `p` ...; not `:hover`
+  rules, rules for elements inside others or rules inside media queries),
+  custom properties and token-file entries named for one (`--card-radius`,
+  `--btn-primary-bg`, `--card` and `--card-foreground`, `--input`), and the
+  shared components in `libraryPrefixes` (`button.jsx` adds its file; the
+  classes in components are not read yet).
+
+`tokens.json` keeps at most 64 of them under `objects`. The **Styles** tab
+lists them under **Objects**, with a small preview of each drawn from the
+recorded values (never from your page's markup), how many elements share
+it and where it comes from.
 
 ### Privacy
 
@@ -298,7 +358,11 @@ theme) are kept in `tokens.json` under `live`.
 - The live sample keeps computed style values and counts only: never text,
   typed values or attribute values, nothing from password, hidden or card
   fields or from inside an element marked `data-dftp-private`, and nothing
-  from SVG, MathML or DFTP's own layer.
+  from SVG, MathML or DFTP's own layer. Object styles are the same computed
+  values, grouped by the kind of element: to recognise a badge, an avatar
+  or a heading it checks whether an element has text, how long it is and
+  whether it is one to three letters, and whether a button has a label,
+  and keeps none of it.
 - Both stay in `.dftp/tokens.json` on your computer, git-ignored with the
   rest of `.dftp/`. Nothing is sent anywhere.
 
@@ -317,7 +381,15 @@ A bar above the preview holds the elements to add: heading, text, button,
 input, card, image placeholder, divider, section and grid row. Drag one onto
 the page (a dashed box and a line show where it lands), or click it to add
 it to the selected box (a card, section or grid row), after the selected new
-element, or at the end of the page. Each new element starts with styles from
+element, or at the end of the page. A button, heading, text, input, card or
+divider first copies your own object style for it (a button your primary
+button, a heading your `h2`, looks seen on your pages before looks from your
+files), so it looks exactly like yours, at each screen size the look the
+app shows at that size. A recorded height is a minimum, so a longer label
+makes the element taller. When your tokens have a dark theme, a color of
+that look that has no dark value (a plain color, or a token without one)
+is used in the light theme only; in the dark theme the element takes the
+role colors below instead. Whatever that leaves open comes from
 your tokens: a button gets the primary color and the most used radius, text
 gets the text color and your body font, cards get your surface, border and
 shadow tokens, sizes come from your spacing and type scales. When the scan
@@ -337,7 +409,10 @@ page in place, and the elements you add next are picked from the new scan.
 
 `CHANGES.md` lists them under **New elements**, in build order, each with
 its container, position, text, token styles (with where each token is
-defined) and component. [CLAUDE.md](CLAUDE.md) tells your assistant how to
+defined), component, and the object style it copies (its kind and variant,
+whether it was seen on the page or found in your files, the rule or
+variable that gives that look, and its values), so your assistant reuses
+your own class or component for it. [CLAUDE.md](CLAUDE.md) tells your assistant how to
 turn that into a new page of your app.
 
 - `--blank` alone: blank pages only, no `--target` needed.
@@ -466,19 +541,21 @@ you are designing may be hostile and keeps it away from your files.
   the folder, and keeps only style values, never page text (see Style
   scan).
 - **The live sample counts styles only.** The page sends computed style
-  values and counts to the designer as a checked message, and the designer
-  passes them on through the locked-down write API. The designer and the
-  server each check every value (known properties, no markup or rule
-  characters, size and count limits), the server takes no sample for a
-  blank page or an unknown page or screen size, and values are merged into
-  `tokens.json` as data only.
+  values and counts (also grouped as object styles: known kinds, variants
+  and properties only) to the designer as a checked message, and the
+  designer passes them on through the locked-down write API. The designer
+  and the server each check every value (known properties, no markup or
+  rule characters, size and count limits), the server takes no sample for
+  a blank page or an unknown page or screen size, and values are merged
+  into `tokens.json` as data only.
 - **Blank pages are generated.** A blank page and its style sheet are made
   by DFTP and served from the page origin under the same policy as the demo
   page (scripts and styles from that origin only). The style sheet holds
-  only normalised token values that pass a strict filter: no `url()`, no
-  function but gradients and easing curves, no braces, semicolons,
-  backslashes, comments, `@`, `!` or single quotes, and double quotes only
-  in pairs (around font names).
+  only normalised token and object-style values that pass a strict filter:
+  no `url()`, no function but gradients and easing curves, no braces,
+  semicolons, backslashes, comments, `@`, `!` or single quotes, and double
+  quotes only in pairs (around font names). An object style's rule is
+  named from checked kind and variant names only.
 - **What is captured.** For each element you change, `.dftp/` records:
   - its tag, `id`, classes, role and a CSS path to it (which can include the
     `id` of an ancestor), its box and its layout context;

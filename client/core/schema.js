@@ -247,6 +247,9 @@ function checkCtx(v) {
 //   styles           {property: token id}, properties from INSERT_STYLE_PROPS
 //   component        the project's own component for it, when the style scan
 //   component_file   found one (an export name and the file it is in)
+//   object           the project's object style it copies, when the style
+//                    scan recorded one ({kind, variant, source}, see
+//                    checkObjectRef)
 // Moves, sizes, hiding and text edits may follow, as on any change. Source
 // location fields (loc, used_in, part, ...) never apply to an insert.
 export const INSERT_ELEMENTS = Object.freeze(["heading", "text", "button", "input", "card", "image", "divider", "section", "grid"]);
@@ -261,7 +264,7 @@ const INSERT_KEY_RE = /^ins:[a-z0-9]{8}$/;
 // "color.brand.600".
 const TOKEN_REF_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}(?:\.[A-Za-z0-9_-]{1,64}){1,11}$/;
 const COMPONENT_RE = /^[A-Z][A-Za-z0-9_]{0,63}$/;
-const INSERT_FIELDS = ["element", "parent", "index", "styles", "component", "component_file"];
+const INSERT_FIELDS = ["element", "parent", "index", "styles", "component", "component_file", "object"];
 const NOT_ON_INSERTS = ["used_in", "was_loc", "occ", "part", "piece", "path", "src", "src_used"];
 
 export function isInsertKey(s) {
@@ -274,6 +277,37 @@ export function isTokenRef(s) {
 
 export function isComponentName(s) {
   return typeof s === "string" && COMPONENT_RE.test(s);
+}
+
+// Object styles (tokens.js): the kinds of things on a page whose whole look
+// the style scan records, where a record comes from (the page's computed
+// styles, or the project's style files) and the rule for a variant name
+// ("primary", "h2", "default-2").
+export const OBJECT_KINDS = Object.freeze(["button", "card", "input", "badge", "avatar", "link", "heading", "text", "divider"]);
+export const OBJECT_SOURCES = Object.freeze(["live", "static"]);
+const VARIANT_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+export function isVariant(s) {
+  return typeof s === "string" && VARIANT_RE.test(s);
+}
+
+// {kind, variant, source}: which recorded object style something copies.
+// Returns a fresh copy or null.
+export function checkObjectRef(v) {
+  if (!isPlainObject(v)) return null;
+  const kind = own(v, "kind");
+  const variant = own(v, "variant");
+  const source = own(v, "source");
+  if (!OBJECT_KINDS.includes(kind) || !isVariant(variant) || !OBJECT_SOURCES.includes(source)) return null;
+  return { kind, variant, source };
+}
+
+// The name of a recorded object style, as the blank page's style sheet and
+// CHANGES.md use it: "live.button.primary". Only letters, digits, "." and
+// "-", so it is safe inside a quoted attribute selector.
+export function objectRef(o) {
+  const r = checkObjectRef(o);
+  return r ? `${r.source}.${r.kind}.${r.variant}` : "";
 }
 
 // {property: token id} -> {value} (a fresh copy) or {error}.
@@ -314,6 +348,11 @@ function checkInsert(c, out) {
   if (has(c, "component_file")) {
     if (!out.component || !isFilePath(own(c, "component_file"))) return "component_file: invalid";
     out.component_file = own(c, "component_file");
+  }
+  if (has(c, "object")) {
+    const o = checkObjectRef(own(c, "object"));
+    if (!o) return "object: must be {kind, variant, source}";
+    out.object = o;
   }
   return null;
 }
@@ -661,4 +700,6 @@ function coerceInsert(c, out) {
     out.component = c.component;
     if (isFilePath(c.component_file)) out.component_file = c.component_file;
   }
+  const o = checkObjectRef(c.object);
+  if (o) out.object = o;
 }

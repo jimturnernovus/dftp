@@ -257,6 +257,7 @@ async function scan(flags, argv) {
     libraryPrefixes: settings.libraryPrefixes,
     only: flags.demo ? ["demo/"] : null,
     live: before && before.live ? before.live : [],
+    devices: settings.devices,
   });
   await store.writeTokens(doc);
   for (const line of summaryLines(doc)) out(line);

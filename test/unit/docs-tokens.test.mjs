@@ -13,7 +13,10 @@ import { scanProject } from "../../server/scan/scanner.mjs";
 import { applyLive, LIVE_MIN } from "../../server/scan/live.mjs";
 import { WALK_LIMITS, SKIP_DIRS } from "../../server/scan/walk.mjs";
 import { safeCssValue } from "../../server/blank.mjs";
-import { validateTokensDoc, TOKEN_TYPES, ROLES, TOKEN_LIMITS, SAMPLE_PROPS } from "../../client/core/tokens.js";
+import {
+  validateTokensDoc, TOKEN_TYPES, ROLES, TOKEN_LIMITS, SAMPLE_PROPS, OBJECT_PROP_LIST, LIVE_VARIANTS,
+} from "../../client/core/tokens.js";
+import { OBJECT_KINDS } from "../../client/core/schema.js";
 import { NEW_PAGE_NOTE } from "../../client/core/spec.js";
 
 const read = (rel) => fs.readFileSync(path.join(TOOL_DIR, rel), "utf8");
@@ -53,9 +56,11 @@ test("the README lists every style adapter, what is planned, and CONTRIBUTING sa
   const rows = reads.split("\n").filter((l) => /^\| `[a-z0-9-]+` \|/.test(l));
   assert.equal(rows.length, ADAPTERS.length, "no row for an adapter that does not exist");
   const planned = flat(section(readme, "### Planned"));
-  for (const s of ["SCSS", "LESS", "Tailwind CSS v3", "classes in your code", "styled-components", "Emotion", "style objects", "SVG", "canvas", "object styles"]) {
+  for (const s of ["SCSS", "LESS", "Tailwind CSS v3", "classes in your code", "styled-components", "Emotion", "style objects", "SVG", "canvas"]) {
     assert.ok(planned.includes(s), `README planned list names ${s}`);
   }
+  // Object styles are built: no longer planned.
+  assert.ok(!planned.includes("object styles"), "object styles are not listed as planned");
   const contributing = flat(section(read("CONTRIBUTING.md"), "## Adding a style source"));
   for (const s of ["server/scan/registry.mjs", "server/scan/adapters/", "extract({path, text, helpers})", "test/fixtures/projects/"]) {
     assert.ok(contributing.includes(s), `CONTRIBUTING.md: ${s}`);
@@ -199,4 +204,35 @@ test("the docs list single-file component style blocks as read and SCSS blocks i
   assert.ok(security.includes("the `<style>` blocks of `*.vue`, `*.svelte` and `*.astro` files"));
   assert.ok(security.includes("runs on a fixed work budget"), "SECURITY.md describes the build's bound, not only the readers'");
   assert.ok(flat(read("README.md")).includes("`color-mix()` and relative colors whose channels are names or numbers"), "the README lists the color syntaxes rather than claiming all");
+});
+
+test("the docs describe object styles as the code records and uses them", async () => {
+  const claude = read("CLAUDE.md");
+  const part = section(claude, "### Reading `.dftp/tokens.json`");
+  const row = part.split("\n").find((l) => l.startsWith("| `objects` |"));
+  assert.ok(row, "CLAUDE.md has a row for objects");
+  for (const k of OBJECT_KINDS) assert.ok(row.includes(`\`${k}\``), `the objects row names the kind ${k}`);
+  for (const p of OBJECT_PROP_LIST) assert.ok(row.includes(`\`${p}\``), `the objects row names the property ${p}`);
+  for (const k of ["kind", "variant", "style", "source", "count", "sources"]) assert.ok(row.includes(`\`${k}\``), `the objects row explains ${k}`);
+  for (const v of new Set(Object.values(LIVE_VARIANTS).flat())) assert.ok(row.includes(`\`${v}\``), `the objects row names the variant ${v}`);
+  // The scan's own object records have exactly the documented fields.
+  const doc = await scanProject({ root: path.join(FIXTURES, "objects") });
+  for (const o of doc.objects) assert.deepEqual(Object.keys(o).sort(), ["count", "kind", "source", "sources", "style", "variant"]);
+  // The change field and the CHANGES.md lines.
+  assert.match(claude, /^\| `object` \| for an insert: the object style it copies/m);
+  const four = flat(section(claude, "## 4. Reading changes"));
+  for (const s of ["object style: copies the project's button look", "found in:", "look:"]) assert.ok(four.includes(s), `section 4 shows ${s}`);
+  const blank = flat(section(claude, "### Building a page from blank-page changes"));
+  assert.ok(blank.includes("Copy the object style the project's way.") && blank.includes("do not write new CSS that repeats the `look` values"));
+  assert.ok(flat(section(claude, "### Using the project's tokens")).includes("**Object styles**"));
+  // README: the kinds, the variants and the limits, as the code has them.
+  const readme = flat(section(read("README.md"), "### Object styles"));
+  for (const k of OBJECT_KINDS) assert.ok(readme.includes(`| \`${k}\` |`), `README table row for ${k}`);
+  for (const [k, list] of Object.entries(LIVE_VARIANTS)) assert.ok(readme.includes(list.map((v) => `\`${v}\``).join(", ")), `README variants of ${k}`);
+  assert.ok(readme.includes(`at most ${TOKEN_LIMITS.sampleObjects} looks, three per kind and variant`) && TOKEN_LIMITS.objectVariants === 3);
+  assert.ok(readme.includes(`keeps at most ${TOKEN_LIMITS.objects} of them under \`objects\``));
+  const security = flat(section(read("SECURITY.md"), "## The style scan and the live sample"));
+  assert.ok(security.includes(`at most ${TOKEN_LIMITS.sampleObjects} looks of up to ${OBJECT_PROP_LIST.length} values each and three per kind and variant`));
+  assert.ok(security.includes("none of these is sent or kept"));
+  assert.ok(flat(read("CHANGELOG.md")).includes("Object styles: the whole look of the project's buttons"));
 });

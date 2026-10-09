@@ -9,13 +9,16 @@ import { helpers } from "./helpers.mjs";
 import { buildDoc, checkOutput } from "./build.mjs";
 import { applyLive } from "./live.mjs";
 import { formatValue } from "../../client/core/css-values.js";
+import { objectSummary } from "./objects.mjs";
 
 // root: the project folder (real path). only: path prefixes to keep (the
-// demo scans demo/ only). live: stored live samples to merge again.
-// limits: overrides for the walk's budgets (tests). signal: AbortSignal.
+// demo scans demo/ only). live: stored live samples to merge again, taken
+// at the screen sizes in devices ([{id, width}], default the built-in
+// ones). limits: overrides for the walk's budgets (tests). signal:
+// AbortSignal.
 export async function scanProject({
   root, libraryPrefixes = ["src/components/ui/"], only = null, adapters = ADAPTERS, limits = {}, signal,
-  live = [], now = () => new Date(), clock = () => Date.now(),
+  live = [], devices, now = () => new Date(), clock = () => Date.now(),
 } = {}) {
   const t0 = clock();
   const opts = Object.freeze({ libraryPrefixes: Object.freeze([...(libraryPrefixes || [])]) });
@@ -52,7 +55,7 @@ export async function scanProject({
   // A scan stopped from outside (the designer closing) builds nothing more.
   if (signal && signal.aborted) results.length = 0;
   const built = buildDoc({ results, diagnostics: state.diagnostics, stats: { ...state.stats, adapters: counts }, now });
-  const doc = live && live.length ? applyLive(built, live) : built;
+  const doc = live && live.length ? applyLive(built, live, { devices }) : built;
   // The time covers reading, extracting and building.
   doc.scan.ms = Math.min(1e9, Math.max(0, Math.round(clock() - t0)));
   return doc;
@@ -82,6 +85,8 @@ export function summaryLines(doc) {
   lines.push(`Scales (px): spacing ${s.spacing.join(" ") || "-"}; font size ${s.fontSize.join(" ") || "-"}; radius ${s.radius.join(" ") || "-"}`);
   if (doc.breakpoints.length) lines.push(`Breakpoints: ${doc.breakpoints.map((b) => `${b.name} ${b.min}`).join(", ")}`);
   if (doc.components.length) lines.push(`Components: ${doc.components.map((c) => `${c.export} (${c.file})`).join(", ")}`);
+  const objects = (doc.objects || []).filter((o) => Object.keys(o.style).length);
+  if (objects.length) lines.push(`Object styles: ${objectSummary(objects)}`);
   const live = (doc.live || []).length;
   if (live) lines.push(`Live samples merged: ${live}`);
   lines.push(`Diagnostics: ${doc.diagnostics.length}${scan.truncated ? " (the scan stopped at a limit; see diagnostics)" : ""}`);

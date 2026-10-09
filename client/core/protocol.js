@@ -13,7 +13,7 @@
 
 import {
   isKey, isLoc, isFilePath, isSha, isTheme, isId, validateChange, validateList, stripControls, LIMITS,
-  INSERT_ELEMENTS, checkInsertStyles, isComponentName,
+  INSERT_ELEMENTS, checkInsertStyles, isComponentName, checkObjectRef,
 } from "./schema.js";
 import { validateSample } from "./tokens.js";
 
@@ -295,11 +295,16 @@ export function validateFrameMsg(data, { ns, nonce }) {
       return { type, files: [...new Set(files)] };
     }
     case "style-sample": {
-      // {elements, values: [{prop, value, count}]}: the shape of a live
-      // sample (tokens.js validateSample) without the page, device and
-      // theme, which the designer window adds from its own state.
-      const r = validateSample({ page: "frame", device: "frame", elements: own(data, "elements"), values: own(data, "values") });
-      return r.ok ? { type, elements: r.value.elements, values: r.value.values } : null;
+      // {elements, values: [{prop, value, count}], objects?}: the shape of
+      // a live sample (tokens.js validateSample) without the page, device
+      // and theme, which the designer window adds from its own state.
+      const body = { page: "frame", device: "frame", elements: own(data, "elements"), values: own(data, "values") };
+      if (own(data, "objects") !== undefined) body.objects = own(data, "objects");
+      const r = validateSample(body);
+      if (!r.ok) return null;
+      const out = { type, elements: r.value.elements, values: r.value.values };
+      if (r.value.objects) out.objects = r.value.objects;
+      return out;
     }
     default:
       return null;
@@ -424,8 +429,9 @@ function checkPoint(v) {
 }
 
 // "insert": {element, styles: {property: token id}, component?, component_file?,
-// at?: {x, y}}. Without `at` the element goes into the selected box (or
-// after the selected new element, or at the end of the page).
+// object?: {kind, variant, source}, at?: {x, y}}. Without `at` the element
+// goes into the selected box (or after the selected new element, or at the
+// end of the page).
 function checkInsertMsg(data) {
   const element = own(data, "element");
   if (!INSERT_ELEMENTS.includes(element)) return null;
@@ -442,6 +448,11 @@ function checkInsertMsg(data) {
       out.component_file = file;
     }
   } else if (file !== undefined) return null;
+  const obj = own(data, "object");
+  if (obj !== undefined && obj !== null) {
+    out.object = checkObjectRef(obj);
+    if (!out.object) return null;
+  }
   const at = own(data, "at");
   if (at !== undefined && at !== null) {
     out.at = checkPoint(at);

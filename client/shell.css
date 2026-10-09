@@ -750,6 +750,46 @@ body[data-current-view="before"] .hint-set[data-for="before"] { display: inline;
   background: #fff;
 }
 
+/* Object styles: a small preview on a light stage, drawn from the
+   bundle's values (the panel only sets colors, borders, radius, shadow,
+   padding, font and a capped height). */
+.tk-obj-stage {
+  width: 88px;
+  min-height: 40px;
+  padding: 4px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #f4f5f7;
+  color: #111827;
+}
+
+.tk-obj {
+  display: inline-flex;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  max-width: 80px;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.tk-obj-input { width: 72px; height: 24px; }
+.tk-obj-card { width: 72px; height: 32px; padding: 0 !important; }
+.tk-obj-avatar { width: 28px; height: 28px !important; padding: 0; }
+.tk-obj-divider { width: 72px; height: 0; border-left: 0 !important; border-right: 0 !important; border-bottom: 0 !important; }
+.tk-obj-heading,
+.tk-obj-text,
+.tk-obj-link { display: inline; }
+
+.tk-obj-props {
+  margin-top: 2px;
+  color: var(--ui-ink-2);
+  font: 11px/1.4 var(--ui-mono);
+  overflow-wrap: anywhere;
+}
+
 .tk-scale,
 .tk-empty,
 .tk-foot {

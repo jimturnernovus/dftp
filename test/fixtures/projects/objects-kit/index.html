@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Settings</title>
+    <link rel="stylesheet" href="src/styles/theme.css">
+    <link rel="stylesheet" href="src/styles/app.css">
+  </head>
+  <body>
+    <main class="page">
+      <h1>Settings</h1>
+      <section class="card">
+        <div class="card-header"><h2>Notifications</h2></div>
+        <div class="card-content">
+          <div class="row"><button class="switch" role="switch" aria-checked="true" aria-label="Email"></button> Email</div>
+          <div class="row"><button class="switch" role="switch" aria-checked="true" aria-label="Push"></button> Push</div>
+          <div class="row"><button class="switch" role="switch" aria-checked="true" aria-label="Digest"></button> Digest</div>
+          <div class="row"><button class="switch" role="switch" aria-checked="false" aria-label="Sounds"></button> Sounds</div>
+          <div class="row">
+            <button class="checkbox" role="checkbox" aria-checked="true" aria-label="One"></button>
+            <button class="checkbox" role="checkbox" aria-checked="true" aria-label="Two"></button>
+            <button class="checkbox" role="checkbox" aria-checked="true" aria-label="Three"></button>
+            <button class="checkbox" role="checkbox" aria-checked="false" aria-label="Four"></button>
+            <button class="checkbox" role="checkbox" aria-checked="false" aria-label="Five"></button>
+          </div>
+          <div class="row">
+            <button class="select-trigger" role="combobox" aria-expanded="false">Weekly</button>
+            <button class="select-trigger" role="combobox" aria-expanded="false">Morning</button>
+            <button class="select-trigger" role="combobox" aria-expanded="false">English</button>
+          </div>
+          <div class="tabs" role="tablist">
+            <button class="tab" role="tab" aria-selected="true">Overview</button>
+            <button class="tab" role="tab" aria-selected="false">Activity</button>
+            <button class="tab" role="tab" aria-selected="false">History</button>
+          </div>
+          <input class="field" type="text" aria-label="Display name">
+          <div class="row">
+            <button class="btn btn-primary">Save preferences</button>
+            <button class="btn btn-primary">Publish</button>
+            <button class="btn btn-soft">Reset</button>
+            <button class="btn btn-soft">Preview</button>
+          </div>
+        </div>
+      </section>
+      <div class="row">
+        <span class="avatar">AB</span>
+        <span class="avatar">CD</span>
+        <button class="btn btn-icon" aria-label="Alerts"><span class="count">3</span></button>
+        <div class="step">1</div>
+        <div class="step">2</div>
+        <div class="step">3</div>
+        <div class="icon-circle"><span class="icon-font">bolt</span></div>
+        <div class="icon-circle"><span class="icon-font">add</span></div>
+        <div class="icon-circle"><span class="icon-font">lock</span></div>
+        <div class="icon-circle"><span class="icon-wrap"><span class="icon-font">add</span></span></div>
+        <div class="icon-circle"><svg viewBox="0 0 24 24" width="20" height="20"><title>Add</title><path d="M11 5h2v14h-2zM5 11h14v2H5z" fill="currentColor"/></svg></div>
+        <span class="avatar"><span class="avatar-text">EF</span></span>
+      </div>
+    </main>
+  </body>
+</html>

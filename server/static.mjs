@@ -41,6 +41,7 @@ export const LAYER_FILES = Object.freeze([
   ["/__dftp/core/protocol.js", "client/core/protocol.js"],
   ["/__dftp/core/devices.js", "client/core/devices.js"],
   ["/__dftp/core/tokens.js", "client/core/tokens.js"],
+  ["/__dftp/core/css-values.js", "client/core/css-values.js"],
   ["/__dftp/core/blank.js", "client/core/blank.js"],
 ]);
 

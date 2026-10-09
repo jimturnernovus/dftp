@@ -1,0 +1,110 @@
+/* A landing page in the style of a CSS framework: component variables on
+   the root, cards padded by their body, a faint rule drawn with opacity. */
+:root {
+  --site-body-color: #212529;
+  --site-body-bg: #ffffff;
+  --site-primary: #0d6efd;
+  --site-border-color: #dee2e6;
+  --site-border-radius: 0.375rem;
+  --site-border-radius-lg: 0.5rem;
+}
+
+*, ::before, ::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  color: var(--site-body-color);
+  background: var(--site-body-bg);
+  font-family: system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.container { max-width: 960px; margin: 0 auto; padding: 24px; display: grid; gap: 24px; }
+
+.floating-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 16px auto;
+  max-width: 960px;
+  padding: 8px 16px;
+  border: 1px solid var(--site-border-color);
+  border-radius: 9999px;
+  background: var(--site-body-bg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+.nav-link { color: var(--site-primary); text-decoration: none; padding: 8px; }
+
+.btn {
+  display: inline-block;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--site-border-radius);
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+}
+.btn-primary { background: var(--site-primary); color: #ffffff; border-color: var(--site-primary); }
+.btn-outline { background: transparent; color: var(--site-primary); border-color: var(--site-primary); }
+.btn-block { display: block; width: 100%; text-align: center; }
+
+.alert {
+  padding: 16px;
+  border: 1px solid #9eeaf9;
+  border-radius: var(--site-border-radius);
+  background: #cff4fc;
+  color: #055160;
+}
+.toast {
+  position: relative;
+  max-width: 320px;
+  padding: 12px 16px;
+  border: 1px solid var(--site-border-color);
+  border-radius: var(--site-border-radius);
+  background: #ffffff;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
+}
+
+.pricing { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+.card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.175);
+  border-radius: var(--site-border-radius-lg);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.075);
+}
+.card-header { padding: 8px 16px; background: rgba(33, 37, 41, 0.03); border-bottom: 1px solid rgba(0, 0, 0, 0.175); }
+.card-header h4 { margin: 0; font-size: 20px; font-weight: 400; }
+.card-body { flex: 1 1 auto; padding: 16px; }
+.card-body p { margin: 0 0 16px; }
+
+.cta { padding: 48px; border-radius: var(--site-border-radius-lg); background: #f8f9fa; }
+.cta h2 { margin: 0 0 16px; }
+
+.accordion { border: 1px solid var(--site-border-color); border-radius: var(--site-border-radius); }
+.accordion h3 { margin: 0; }
+.accordion-button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 16px 20px;
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+  color: var(--site-body-color);
+  font-size: 16px;
+  text-align: left;
+}
+.accordion-button[aria-expanded="true"] { background: #cfe2ff; color: #052c65; }
+
+hr {
+  margin: 16px 0;
+  color: inherit;
+  border: 0;
+  border-top: 1px solid;
+  opacity: 0.25;
+}

@@ -18,6 +18,8 @@
 //      the same value; those no name covers become unnamed tokens
 //      (color.auto.2f5bd8).
 //   5. Ids, aliases, roles, scales, breakpoints and components.
+//   6. Object styles named in the files (objects.mjs): rules for .btn,
+//      .card, input ..., variables named for them, shared components.
 //
 // All of it runs on a fixed work budget (BUILD_LIMITS.work, characters
 // looked at while following references and reading values), so no project
@@ -34,6 +36,7 @@ import {
 import { isFilePath, isComponentName, stripControls } from "../../client/core/schema.js";
 import { usageValues, colorUse, findVarRefs, findBraceRefs, propKind } from "./usage.mjs";
 import { idFromName, inferType, roleFromName, TYPE_GROUP, SPACING_GROUPS } from "./names.mjs";
+import { staticObjects } from "./objects.mjs";
 
 export const BUILD_LIMITS = Object.freeze({
   tokensPerFile: 5000,
@@ -99,6 +102,7 @@ export function checkOutput(out) {
     const r = { prop: u.prop, raw, line: isInt(u.line, 1, 1e7) ? u.line : 1 };
     const sel = str(u.selector, 300);
     if (sel) r.selector = sel;
+    if (u.narrow === true) r.narrow = true;
     res.usages.push(r);
   }
   for (const c of arr(out.components).slice(0, BUILD_LIMITS.componentsPerFile)) {
@@ -822,6 +826,28 @@ export function buildDoc({ results = [], diagnostics = [], stats = {}, now = () 
   }
   components.sort((a, b) => (a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
 
+  // 6. Object styles. A value is read with its variables put in, and names
+  // the tokens it refers to first.
+  const finalIds = new Set(tokens.map((t) => t.id));
+  const objects = staticObjects({
+    results,
+    tokens,
+    resolve: (raw) => {
+      if (!raw.toLowerCase().includes("var(")) return raw;
+      const r = substitute(raw, null, []);
+      return r.error ? null : r.raw;
+    },
+    refIds: (raw) => {
+      const out = new Set();
+      if (!raw.toLowerCase().includes("var(")) return out;
+      for (const ref of findVarRefs(raw, 8)) {
+        const g = keyToGroup.get(`css:${ref.name}`);
+        if (g && g.id && finalIds.has(g.id)) out.add(g.id);
+      }
+      return out;
+    },
+  });
+
   if (outOfWork) addDiag("scan", null, null, "budget-build");
   const seenDiag = new Set();
   const outDiags = diags.filter((d) => {
@@ -844,6 +870,7 @@ export function buildDoc({ results = [], diagnostics = [], stats = {}, now = () 
     breakpoints: computeBreakpoints(tokens, media),
     components,
     diagnostics: outDiags,
+    objects,
     scan: {
       files: isInt(stats.files, 0, 1e9) ? stats.files : 0,
       skipped: isInt(stats.skipped, 0, 1e9) ? stats.skipped : 0,

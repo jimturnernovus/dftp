@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Plans</title>
+    <link rel="stylesheet" href="src/styles/site.css">
+  </head>
+  <body>
+    <nav class="floating-nav">
+      <a class="nav-link" href="#plans">Plans</a>
+      <a class="nav-link" href="#questions">Questions</a>
+      <button class="btn btn-primary" type="button">Sign up</button>
+    </nav>
+    <main class="container">
+      <div class="alert" role="alert">The new plans start next month. <a href="#plans">Compare them</a>.</div>
+      <div class="toast" role="status">Your changes were saved.</div>
+      <div class="pricing" id="plans">
+        <div class="card">
+          <div class="card-header"><h4>Free</h4></div>
+          <div class="card-body"><p>For one person.</p><button class="btn btn-outline" type="button">Start</button></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h4>Team</h4></div>
+          <div class="card-body"><p>For a small team.</p><button class="btn btn-outline" type="button">Start</button></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h4>Company</h4></div>
+          <div class="card-body"><p>For everyone.</p><button class="btn btn-outline" type="button">Talk to us</button></div>
+        </div>
+      </div>
+      <div class="accordion" id="questions">
+        <h3><button class="accordion-button" type="button" aria-expanded="true">Can I change plans later?</button></h3>
+        <h3><button class="accordion-button" type="button" aria-expanded="true">Is there a trial?</button></h3>
+        <h3><button class="accordion-button" type="button" aria-expanded="true">Do you send invoices?</button></h3>
+        <h3><button class="accordion-button" type="button" aria-expanded="true">Can a team share one plan?</button></h3>
+        <h3><button class="accordion-button" type="button" aria-expanded="false">Where is my data kept?</button></h3>
+      </div>
+      <div class="cta">
+        <h2>Stay in touch</h2>
+        <button class="btn btn-primary" type="button">Subscribe</button>
+      </div>
+      <button class="btn btn-primary btn-block" type="button">Start a trial</button>
+      <hr>
+    </main>
+  </body>
+</html>

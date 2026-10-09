@@ -830,7 +830,26 @@ export function parseHslChannels(str) {
 
 const STOP_RE = /^(?:repeating-)?(linear|radial|conic)-gradient$/;
 
-const HEAD_WORD_RE = /^(?:[a-z][a-z-]{0,23}|[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?[a-z%]{0,6})$/;
+// The words a gradient's first argument may hold: CSS keywords for a
+// direction, a shape and size, a position and a color space to interpolate
+// in, and numbers with a unit. Nothing else is kept, so a stored gradient
+// never carries other words to where it is shown or written out later.
+export const GRADIENT_HEAD_WORDS = Object.freeze([
+  "to", "top", "bottom", "left", "right", "center", "at", "from", "in",
+  "circle", "ellipse", "closest-side", "closest-corner", "farthest-side", "farthest-corner",
+  "srgb", "srgb-linear", "display-p3", "a98-rgb", "prophoto-rgb", "rec2020", "lab", "oklab", "xyz", "xyz-d50", "xyz-d65",
+  "hsl", "hwb", "lch", "oklch", "shorter", "longer", "increasing", "decreasing", "hue",
+]);
+const HEAD_WORD_SET = new Set(GRADIENT_HEAD_WORDS);
+const HEAD_NUMBER_RE = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?(?:deg|grad|rad|turn|px|em|rem|ex|ch|vw|vh|vmin|vmax|cm|mm|in|pt|pc|q|%)?$/;
+
+// Whether `s` (lower case, single spaces, at most 12 words and 80
+// characters) is a gradient's first argument made of those words only.
+export function isGradientHead(s) {
+  if (typeof s !== "string" || s.length === 0 || s.length > 80) return false;
+  const words = s.split(" ");
+  return words.length <= 12 && words.every((w) => HEAD_WORD_SET.has(w) || HEAD_NUMBER_RE.test(w));
+}
 
 // The first argument of a gradient when it is not a color stop: an angle or
 // "to <side>", a radial shape, size and "at" position, a conic "from" angle,
@@ -839,9 +858,8 @@ const HEAD_WORD_RE = /^(?:[a-z][a-z-]{0,23}|[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]
 function gradientHead(part) {
   const words = splitTop(part, " ").map((w) => w.toLowerCase());
   if (words.length === 0 || words.length > 12 || words.some((w) => parseColor(w))) return "";
-  if (!words.every((w) => HEAD_WORD_RE.test(w))) return null;
   const head = words.join(" ");
-  return head.length <= 80 ? head : null;
+  return isGradientHead(head) ? head : null;
 }
 
 // A gradient -> {kind, repeating, head?, stops: [{color, at}]}: head is the
@@ -1195,5 +1213,26 @@ export function formatValue(type, v) {
     case "shadow": return v.map((l) => `${l.inset ? "inset " : ""}${dimText(l.x)} ${dimText(l.y)} ${dimText(l.blur)} ${dimText(l.spread)} ${colorText(l.color)}`).join(", ");
     case "border": return [v.width ? dimText(v.width) : "", v.style || "", v.color ? colorText(v.color) : ""].filter(Boolean).join(" ");
     default: return dimText(v);
+  }
+}
+
+// CSS text for one normalised value of an object style's property (the
+// shapes tokens.js checkObjectValue accepts): a color or a gradient for a
+// background, {style} for a border style, [] for "no shadow", and the token
+// types otherwise. Built only from validated parts; "" when it cannot be
+// written. A token id is not a value: callers write its variable instead.
+export function formatObjectValue(prop, v) {
+  if (v === null || typeof v !== "object") return "";
+  switch (prop) {
+    case "background":
+      if (typeof v.hex === "string") return formatValue("color", v);
+      return Array.isArray(v.stops) ? formatValue("gradient", v) : "";
+    case "color":
+    case "border-color": return formatValue("color", v);
+    case "border-style": return typeof v.style === "string" ? v.style : "";
+    case "box-shadow": return Array.isArray(v) && v.length === 0 ? "none" : formatValue("shadow", v);
+    case "font-family": return formatValue("fontFamily", v);
+    case "font-weight": return formatValue("fontWeight", v);
+    default: return formatValue("dimension", v);
   }
 }

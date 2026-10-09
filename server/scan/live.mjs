@@ -10,12 +10,18 @@
 // height in a sample is a ratio the layer worked out from px values (the
 // page itself only reports px), so it marks a unitless token as seen but
 // never becomes a token of its own.
+//
+// The object styles a sample recorded (a primary button's whole look, a
+// card's ...) become the document's live objects, named by tokens where
+// tokens have their values (objects.mjs), ahead of the static ones the
+// scan found in the files.
 
 import { valueKey } from "../../client/core/css-values.js";
 import { TOKEN_LIMITS, cleanRaw, checkValue } from "../../client/core/tokens.js";
 import { usageValues, colorUse } from "./usage.mjs";
 import { slugFor, uniqueId, sortTokens, computeScales } from "./build.mjs";
 import { TYPE_GROUP } from "./names.mjs";
+import { liveObjects, mergeObjects } from "./objects.mjs";
 
 // A value seen on fewer elements than this does not become a token of its own.
 export const LIVE_MIN = 3;
@@ -29,7 +35,9 @@ export function mergeSamples(list, sample, at) {
   return next.slice(-TOKEN_LIMITS.liveSamples);
 }
 
-export function applyLive(doc, samples) {
+// opts.devices: the designer's screen sizes ([{id, width}]), for object
+// styles that differ by screen size (objects.mjs liveObjects).
+export function applyLive(doc, samples, { devices } = {}) {
   const tokens = doc.tokens.map((t) => ({ ...t, sources: [...t.sources], usage: { ...t.usage } }));
   const used = new Set(tokens.map((t) => t.id));
   const index = new Map();
@@ -89,5 +97,7 @@ export function applyLive(doc, samples) {
     if (best) best.role = role;
   }
   sortTokens(tokens);
-  return { ...doc, tokens, scales: computeScales(tokens), live: [...(samples || [])] };
+  const statics = (Array.isArray(doc.objects) ? doc.objects : []).filter((o) => o.source === "static");
+  const objects = mergeObjects(liveObjects(samples, tokens, { devices, statics }), statics, tokens);
+  return { ...doc, tokens, scales: computeScales(tokens), objects, live: [...(samples || [])] };
 }

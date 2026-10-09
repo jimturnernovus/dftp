@@ -12,7 +12,8 @@ const FIRST_SCAN_WAIT_MS = 12000;
 // How long closing waits for a scan that is still running.
 export const CLOSE_WAIT_MS = 1500;
 
-// cfg: the frozen settings (root, mode, libraryPrefixes). store: openStore().
+// cfg: the frozen settings (root, mode, libraryPrefixes, devices). store:
+// openStore().
 export function createTokens({ cfg, store, scan = scanProject }) {
   const controller = new AbortController();
   const only = cfg.mode === "demo" ? ["demo/"] : null;
@@ -33,7 +34,7 @@ export function createTokens({ cfg, store, scan = scanProject }) {
   // samples are kept only then: a document that fails leaves the last good
   // one in place, and a sample that made it fail is not kept.
   async function publish(nextSamples = samples) {
-    const next = nextSamples.length ? applyLive(scanned, nextSamples) : scanned;
+    const next = nextSamples.length ? applyLive(scanned, nextSamples, { devices: cfg.devices }) : scanned;
     if (closed) return current;
     current = await store.writeTokens(next);
     samples = nextSamples;

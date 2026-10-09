@@ -25,12 +25,14 @@
 import { envelope, validateShellMsg, BEFORE_TYPES } from "./protocol.js";
 import {
   coerceChange, isKey, isLoc, splitLoc, newChangeId, LIMITS, INSERT_STYLE_PROPS, SCAFFOLD_KEY, isInsertKey, isTokenRef,
+  OBJECT_KINDS, objectRef, checkObjectRef,
 } from "./schema.js";
 import { pageIdentity } from "./devices.js";
-import { TOKEN_LIMITS, SAMPLE_PROPS } from "./tokens.js";
+import { TOKEN_LIMITS, SAMPLE_PROPS, OBJECT_KIND_PROPS, LIVE_VARIANTS } from "./tokens.js";
+import { parseColor, splitTop } from "./css-values.js";
 import {
   ELEMENTS, insertTree, depthUnder, tokenVar, styleVar, isInsert, INSERT_DEPTH,
-  SCAFFOLD_ATTR, INSERT_ATTR, KIND_ATTR, BOX_ATTR, COMPONENT_ATTR, TOKENS_CSS,
+  SCAFFOLD_ATTR, INSERT_ATTR, KIND_ATTR, BOX_ATTR, COMPONENT_ATTR, OBJECT_ATTR, TOKENS_CSS,
 } from "./blank.js";
 
 const GRIPS = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
@@ -1337,6 +1339,14 @@ export function startLayer(opts) {
   // centres a box). Bounded by element, visit, time and value counts; the
   // values sent pass validateSample, or the designer window would drop the
   // whole message.
+  //
+  // The same walk records object styles: the whole look of common things
+  // the page shows (see objectOf), as the computed values of the properties
+  // tokens.js allows for each kind, counted per identical bundle; the most
+  // common SAMPLE_OBJ.perClass bundles of each kind and variant are sent.
+  // An element that carries a drawn change is left out (the layer may have
+  // moved or sized it). Text is looked at only to tell whether an element
+  // has any and how long it is; it is never kept.
   const SAMPLE = Object.freeze({
     elements: TOKEN_LIMITS.sampleElements,
     values: TOKEN_LIMITS.sampleValues,
@@ -1347,6 +1357,21 @@ export function startLayer(opts) {
     delayMs: 400,
     themeDelayMs: 800,
     gapMs: 1000,
+  });
+  const SAMPLE_OBJ = Object.freeze({
+    keysPerClass: 64,
+    perClass: TOKEN_LIMITS.objectVariants,
+    total: TOKEN_LIMITS.sampleObjects,
+    badgeText: 24,
+    linkButtonHeight: 72,
+    // A button lower than this is not one to copy, nor one wider than this
+    // that is a bar (objectOf); an avatar smaller than this is an icon or a
+    // counter.
+    buttonMin: 24,
+    buttonMaxWidth: 480,
+    avatarMin: 24,
+    // Elements an initials avatar may hold (a wrapper around its letters).
+    initialsInner: 4,
   });
   const SAMPLE_PROP_SET = new Set(SAMPLE_PROPS);
   const SAMPLE_SKIP = new Set(["head", "script", "style", "link", "meta", "base", "title", "noscript", "template", "slot", "br", "wbr", "iframe", "frame", "object", "embed"]);
@@ -1391,6 +1416,306 @@ export function startLayer(opts) {
     return false;
   };
 
+  // ---- object styles
+
+  const BUTTON_INPUT_TYPES = new Set(["button", "submit", "reset"]);
+  const GRADIENT_RE = /^(?:repeating-)?(?:linear|radial|conic)-gradient\(/;
+  const CORNERS = ["top-left", "top-right", "bottom-right", "bottom-left"];
+  // Roles of controls that are drawn on a <button> or a link but are not
+  // buttons (a switch, a check box, a tab, a select box's trigger ...).
+  const WIDGET_ROLES = new Set([
+    "switch", "checkbox", "radio", "tab", "combobox", "option", "slider", "menuitem", "menuitemcheckbox", "menuitemradio",
+    "treeitem", "spinbutton", "scrollbar", "gridcell",
+  ]);
+  // Parts of a page that hold other things or tell something, never a card:
+  // by tag and by role.
+  const NOT_CARD_TAGS = new Set(["html", "body", "main", "nav", "header", "footer", "aside", "form", "dialog", "fieldset"]);
+  const NOT_CARD_ROLES = new Set([
+    "navigation", "banner", "contentinfo", "alert", "alertdialog", "status", "dialog", "tooltip", "log", "menu", "menubar",
+    "toolbar", "tablist", "listbox", "search",
+  ]);
+  // Fonts that draw icons from words (a ligature such as "bolt").
+  const ICON_FONT_RE = /icon|symbol|awesome|glyph/i;
+  // Initials: one to three letters, nothing else.
+  const INITIALS_RE = /^\p{L}{1,3}$/u;
+  // Content that makes a round thing an icon, not initials.
+  const INITIALS_NOT_TAGS = new Set(["img", "picture", "video", "canvas", "i"]);
+  // The largest corner radius kept as it is: a "fully round" radius written
+  // as a huge length (calc(infinity * 1px) computes to 3.35544e+07px) is
+  // sent as this many px, which still draws a pill.
+  const PILL_PX = 9999;
+  const HUGE_PX_RE = /^\d+(?:\.\d+)?(?:e\+?\d+)?px$/;
+
+  // Colors as the page computes them, in any syntax (rgb(), oklch(), lab(),
+  // color() ...), read once each: [r, g, b, alpha] in sRGB, or null.
+  const rgbCache = new Map();
+  const rgbOf = (c) => {
+    const k = String(c || "");
+    if (rgbCache.has(k)) return rgbCache.get(k);
+    const p = k.length <= 120 ? parseColor(k) : null;
+    const out = p ? [1, 3, 5].map((i) => parseInt(p.hex.slice(i, i + 2), 16)).concat(p.alpha) : null;
+    if (rgbCache.size >= 512) rgbCache.clear();
+    rgbCache.set(k, out);
+    return out;
+  };
+  const lumOf = (rgb) => {
+    const f = (v) => {
+      const x = v / 255;
+      return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+    };
+    return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
+  };
+  // The contrast ratio of color c laid over the color behind it (white when
+  // that is unknown), or null when c cannot be read.
+  const contrastOn = (c, behind) => {
+    const a = rgbOf(c);
+    if (!a) return null;
+    const b = rgbOf(behind) || [255, 255, 255, 1];
+    const mix = [0, 1, 2].map((i) => a[i] * a[3] + b[i] * (1 - a[3]));
+    const l1 = lumOf(mix);
+    const l2 = lumOf(b);
+    return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+  };
+  const saturationOf = (rgb) => {
+    const [r, g, b] = rgb.slice(0, 3).map((v) => v / 255);
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const l = (max + min) / 2;
+    return max === min ? 0 : (max - min) / (1 - Math.abs(2 * l - 1));
+  };
+  // A fill that can be told from what is behind it. A color that cannot be
+  // read is no fill.
+  const fillShows = (bg, behind) => {
+    if (clearColor(bg)) return false;
+    const k = contrastOn(bg, behind);
+    return k !== null && k >= 1.05;
+  };
+  // A fill that stands out: dark on light (or the reverse), or a clear hue.
+  const fillStrong = (bg, behind) => {
+    const k = contrastOn(bg, behind);
+    if (k === null) return false;
+    if (k >= 1.6) return true;
+    return saturationOf(rgbOf(bg)) >= 0.35 && k >= 1.15;
+  };
+  // A color with its alpha multiplied by `k` (an element's opacity), as
+  // rgba(); the color as it is when it cannot be read.
+  const faded = (c, k) => {
+    const a = rgbOf(c);
+    if (!a) return c;
+    return `rgba(${a[0]}, ${a[1]}, ${a[2]}, ${Math.round(a[3] * k * 1000) / 1000})`;
+  };
+  // A computed box-shadow without the layers that draw nothing (a see-
+  // through color, or no offset, blur and spread: frameworks keep several
+  // such resting layers in every shadow), "none" when no layer is left.
+  const visibleShadow = (v) => {
+    if (!v || v === "none") return "none";
+    const keep = splitTop(v, ",").map((x) => x.trim()).filter((layer) => {
+      const words = splitTop(layer, " ");
+      const lengths = words.filter((w) => PX_RE.test(w));
+      if (lengths.length && lengths.every((w) => parseFloat(w) === 0)) return false;
+      const color = words.find((w) => w !== "inset" && !PX_RE.test(w));
+      return !(color && clearColor(color)) && !(color && rgbOf(color) && rgbOf(color)[3] === 0);
+    });
+    return keep.length ? keep.join(", ") : "none";
+  };
+  const sidesOf = (cs) => SAMPLE_SIDES.map((side) => {
+    const style = cs.getPropertyValue(`border-${side}-style`);
+    const width = cs.getPropertyValue(`border-${side}-width`);
+    const color = cs.getPropertyValue(`border-${side}-color`);
+    return { style, width, color, drawn: style !== "none" && style !== "hidden" && !zeroLen(width) && !clearColor(color) };
+  });
+  const sameSides = (sides) => sides.every((x) => x.style === sides[0].style && x.width === sides[0].width && x.color === sides[0].color);
+  const outlinedAll = (sides) => sides.every((x) => x.drawn);
+  // The corner radius in px when all four corners are the same, else null.
+  const radiusPx = (cs, w) => {
+    const c = CORNERS.map((k) => cs.getPropertyValue(`border-${k}-radius`));
+    if (!c.every((x) => x === c[0]) || /\s/.test(c[0].trim())) return null;
+    const v = parseFloat(c[0]);
+    if (!Number.isFinite(v)) return 0;
+    return c[0].trim().endsWith("%") ? (v * w) / 100 : v;
+  };
+  const padded = (cs) => SAMPLE_SIDES.some((side) => !zeroLen(cs.getPropertyValue(`padding-${side}`)));
+  const hasWords = (el) => /\S/.test(el.textContent || "");
+  // The length of an element's text, up to `max` + 1 (it is not kept).
+  const textLength = (el, max) => {
+    const t = (el.textContent || "").slice(0, max * 8).trim();
+    return Math.min(t.length, max + 1);
+  };
+  // Whether an element's text reads as initials (one to three letters) in
+  // a font that draws letters, not icons, at any depth. Text inside a
+  // drawing (an SVG's title) or next to a picture is an icon's, and an
+  // element holding more than a few others is not a plain avatar. The
+  // text is not kept.
+  const showsInitials = (el, cs) => {
+    if (!INITIALS_RE.test((el.textContent || "").slice(0, 32).trim())) return false;
+    if (ICON_FONT_RE.test(cs.fontFamily || "")) return false;
+    const inner = el.getElementsByTagName("*");
+    if (inner.length > SAMPLE_OBJ.initialsInner) return false;
+    for (const kid of inner) {
+      if (kid.namespaceURI !== XHTML_NS || INITIALS_NOT_TAGS.has(kid.localName)) return false;
+      try {
+        if (ICON_FONT_RE.test(window.getComputedStyle(kid).fontFamily || "")) return false;
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  };
+  // Whether an element holds its content in the middle: by justify-content
+  // in a flex or grid box, else by text-align.
+  const centered = (cs) => (/\b(?:flex|grid)\b/.test(cs.display) ? /center/.test(cs.justifyContent) : cs.textAlign === "center" || cs.textAlign === "-webkit-center");
+  // A button has a name: its own text, a label, or (an <input> button) the
+  // label the browser shows.
+  const named = (el, tag) => tag === "input" || hasWords(el) || /\S/.test(el.getAttribute("aria-label") || "") || el.hasAttribute("aria-labelledby");
+  // The child that holds a container's padding when the container has none
+  // of its own (a card whose body or header is padded): its first or last
+  // element child that spans the container, an unfilled one first.
+  const paddingChild = (el, w) => {
+    const kids = [el.firstElementChild, el.lastElementChild].filter((k, i, a) => k && a.indexOf(k) === i);
+    let pick = null;
+    for (const k of kids) {
+      if (pieceOf(k) || k.namespaceURI !== XHTML_NS) continue;
+      let kcs;
+      try {
+        kcs = window.getComputedStyle(k);
+      } catch {
+        continue;
+      }
+      if (kcs.display === "none" || !padded(kcs) || k.getBoundingClientRect().width < w * 0.8) continue;
+      if (clearColor(kcs.backgroundColor)) return kcs;
+      if (!pick) pick = kcs;
+    }
+    return pick;
+  };
+
+  // What common thing an element is: [kind, variant, padding] (LIVE_VARIANTS
+  // in tokens.js; padding: the computed style of a child that holds a
+  // card's padding, or null), or null. behind: the computed color behind
+  // the element.
+  function objectOf(el, cs, behind) {
+    const tag = el.localName;
+    const role = (el.getAttribute("role") || "").toLowerCase();
+    const type = tag === "input" ? String(el.type).toLowerCase() : "";
+    if (tag === "input" && TEXT_INPUT_TYPES.has(type)) return ["input", "text", null];
+    if (tag === "select") return ["input", "select", null];
+    if (tag === "textarea") return ["input", "textarea", null];
+    if (WIDGET_ROLES.has(role)) return null;
+    const bg = cs.backgroundColor;
+    const sides = sidesOf(cs);
+    const filled = fillShows(bg, behind);
+    const outlined = outlinedAll(sides);
+    const r = el.getBoundingClientRect();
+    const isButton = tag === "button" || (tag === "input" && BUTTON_INPUT_TYPES.has(type)) || role === "button" ||
+      (tag === "a" && el.hasAttribute("href") && (filled || outlined) && padded(cs) && r.height <= SAMPLE_OBJ.linkButtonHeight);
+    if (isButton) {
+      // Too small or nameless, or a wide bar that opens a section or holds
+      // its label at one side (an accordion's header, a full-width row):
+      // not a button to copy. A wide button with its label in the middle
+      // (a full-width call to action) still is one.
+      if (r.height < SAMPLE_OBJ.buttonMin || !named(el, tag)) return null;
+      if (r.width > SAMPLE_OBJ.buttonMaxWidth && (el.hasAttribute("aria-expanded") || !centered(cs))) return null;
+      return ["button", filled ? (fillStrong(bg, behind) ? "primary" : "secondary") : outlined ? "secondary" : "ghost", null];
+    }
+    if (tag === "h1" || tag === "h2" || tag === "h3") return hasWords(el) ? ["heading", tag, null] : null;
+    if (tag === "hr" || role === "separator") return ["divider", "default", null];
+    if (tag === "a") return el.hasAttribute("href") && hasWords(el) ? ["link", "default", null] : null;
+    if (tag === "p") return showsText(el) ? ["text", "body", null] : null;
+    const w = r.width;
+    const h = r.height;
+    const rad = radiusPx(cs, w);
+    if (w >= 16 && w <= 160 && Math.abs(w - h) <= Math.max(2, w * 0.1) && rad !== null && rad >= 0.4 * w) {
+      // Round and square: a picture or initials make it an avatar; anything
+      // else this shape (a step number, an icon in a circle, a counter on a
+      // button's corner) is not recorded.
+      if (w < SAMPLE_OBJ.avatarMin || (cs.position === "absolute" && el.parentElement && el.parentElement.closest("button, a, [role=button]"))) return null;
+      const kid = el.children.length === 1 ? el.firstElementChild : null;
+      if (tag === "img" || /url\(/.test(cs.backgroundImage || "") || (kid && kid.localName === "img")) return ["avatar", "image", null];
+      return filled && showsInitials(el, cs) ? ["avatar", "initials", null] : null;
+    }
+    if (tag === "img") return null;
+    if (el.children.length === 0 && h <= 3 && w >= 24 && (filled || sides.filter((x) => x.drawn).length === 1) && !hasWords(el)) return ["divider", "default", null];
+    if (h <= 40 && w <= 240 && rad !== null && rad > 0 && (filled || outlined) && (/inline/.test(cs.display) || w <= 160)) {
+      const n = textLength(el, SAMPLE_OBJ.badgeText);
+      if (n > 0 && n <= SAMPLE_OBJ.badgeText) return ["badge", rad >= h / 2 - 0.5 ? "pill" : "badge", null];
+    }
+    if (/^(?:block|flex|grid|flow-root)$/.test(cs.display) && w >= 120 && h >= 48 && rad !== null && rad > 0 &&
+      (filled || outlined || (cs.boxShadow && cs.boxShadow !== "none")) && !NOT_CARD_TAGS.has(tag) && !NOT_CARD_ROLES.has(role) &&
+      cs.position !== "fixed" && cs.position !== "sticky" && (el.children.length > 0 || hasWords(el))) {
+      const own = SAMPLE_SIDES.map((side) => !zeroLen(cs.getPropertyValue(`padding-${side}`)));
+      // A card whose padding sits on its body: the body's padding is the
+      // card's (each direction the card has none of its own).
+      const kid = own[0] && own[3] ? null : paddingChild(el, w);
+      if (own.some(Boolean) || kid) return ["card", "default", kid];
+    }
+    return null;
+  }
+
+  // The computed look of an element of kind `kind`: {property: value} for
+  // the properties tokens.js allows for that kind, or null. pad: the
+  // computed style of a child that holds a card's padding, or null. An
+  // element drawn see-through (opacity below 1) has that folded into its
+  // colors; a fully round corner is sent as PILL_PX.
+  function objectStyle(kind, el, cs, pad) {
+    const props = OBJECT_KIND_PROPS[kind];
+    const out = {};
+    const put = (p, raw) => {
+      if (!props.includes(p) || typeof raw !== "string") return;
+      const v = p === "font-family" ? fitFamilies(raw.trim()) : raw.trim();
+      if (!v || v.length > SAMPLE.valueLen || SAMPLE_BAD_RE.test(v)) return;
+      out[p] = v;
+    };
+    const opacity = parseFloat(cs.opacity);
+    const fade = Number.isFinite(opacity) && opacity >= 0 && opacity < 1 ? (c) => faded(c, opacity) : (c) => c;
+    const img = cs.backgroundImage || "";
+    if (GRADIENT_RE.test(img) && !img.includes("url(")) put("background", img);
+    else put("background", fade(cs.backgroundColor));
+    put("color", fade(cs.color));
+    // The border when all four sides are the same (a transparent one too:
+    // it still takes room), or a divider's one drawn side.
+    const sides = sidesOf(cs);
+    const drawn = sides.filter((x) => x.drawn);
+    const none = (x) => x.style === "none" || x.style === "hidden" || zeroLen(x.width);
+    let side = null;
+    if (sameSides(sides) && !none(sides[0])) side = sides[0];
+    else if (kind === "divider" && drawn.length === 1 && sides.filter((x) => !none(x)).length === 1) side = drawn[0];
+    if (side) {
+      put("border-width", side.width);
+      put("border-style", side.style);
+      put("border-color", fade(side.color));
+    } else if (sides.every(none)) {
+      put("border-width", "0px");
+      put("border-style", "none");
+    }
+    const corners = CORNERS.map((k) => cs.getPropertyValue(`border-${k}-radius`));
+    if (corners.every((x) => x === corners[0]) && !/\s/.test(corners[0].trim())) {
+      put("border-radius", HUGE_PX_RE.test(corners[0].trim()) && parseFloat(corners[0]) > PILL_PX ? `${PILL_PX}px` : corners[0]);
+    }
+    put("box-shadow", visibleShadow(cs.boxShadow));
+    put("padding-block", zeroLen(cs.paddingTop) && pad ? pad.paddingTop : cs.paddingTop);
+    put("padding-inline", zeroLen(cs.paddingLeft) && pad ? pad.paddingLeft : cs.paddingLeft);
+    if (/\b(?:flex|grid)\b/.test(cs.display) && cs.rowGap === cs.columnGap && !zeroLen(cs.rowGap)) put("gap", cs.rowGap);
+    if (props.includes("height")) put("height", `${Math.round(el.getBoundingClientRect().height * 100) / 100}px`);
+    put("font-family", cs.fontFamily);
+    put("font-size", cs.fontSize);
+    put("font-weight", cs.fontWeight);
+    if (cs.lineHeight !== "normal") put("line-height", cs.lineHeight);
+    if (!zeroLen(cs.letterSpacing)) put("letter-spacing", cs.letterSpacing);
+    return Object.keys(out).length ? out : null;
+  }
+
+  // The bundles counted in one walk, as the sample's objects.
+  function objectList(found) {
+    const out = [];
+    for (const [cls, m] of found) {
+      const [kind, variant] = cls.split("|");
+      const top = [...m.values()].sort((a, b) => b.count - a.count || (a.sig < b.sig ? -1 : a.sig > b.sig ? 1 : 0)).slice(0, SAMPLE_OBJ.perClass);
+      for (const e of top) out.push({ kind, variant, count: Math.min(e.count, TOKEN_LIMITS.sampleCount), style: e.style });
+    }
+    const rank = (o) => OBJECT_KINDS.indexOf(o.kind) * 10 + LIVE_VARIANTS[o.kind].indexOf(o.variant);
+    out.sort((a, b) => rank(a) - rank(b) || b.count - a.count);
+    return out.slice(0, SAMPLE_OBJ.total);
+  }
+
   // The page is DFTP's own blank page: the designer says so, or its
   // generated scaffold is there.
   const generatedPage = () => S.page.blank === true || !!document.querySelector(`body > main[${SCAFFOLD_ATTR}]`);
@@ -1417,6 +1742,11 @@ export function startLayer(opts) {
     let elements = 0;
     let visits = 0;
     const stack = [document.documentElement];
+    // The color behind each element's content (its own fill, else what is
+    // behind its parent), and the object bundles counted: "kind|variant" ->
+    // Map(signature -> {style, count, sig}).
+    const behind = new Map();
+    const found = new Map();
     while (stack.length && elements < SAMPLE.elements && visits < SAMPLE.visits) {
       const el = stack.pop();
       visits++;
@@ -1429,9 +1759,24 @@ export function startLayer(opts) {
         continue;
       }
       if (cs.display === "none") continue;
+      const back = behind.get(el.parentElement) || "";
+      behind.set(el, clearColor(cs.backgroundColor) ? back : cs.backgroundColor);
       for (let i = el.children.length - 1; i >= 0; i--) stack.push(el.children[i]);
       if (cs.display === "contents" || cs.visibility !== "visible" || el.getClientRects().length === 0) continue;
       elements++;
+      if (!el.hasAttribute(MARK)) {
+        const o = objectOf(el, cs, back);
+        const style = o ? objectStyle(o[0], el, cs, o[2]) : null;
+        if (style) {
+          const cls = `${o[0]}|${o[1]}`;
+          if (!found.has(cls)) found.set(cls, new Map());
+          const m = found.get(cls);
+          const sig = JSON.stringify(style);
+          const e = m.get(sig);
+          if (e) e.count++;
+          else if (m.size < SAMPLE_OBJ.keysPerClass) m.set(sig, { style, count: 1, sig });
+        }
+      }
       if (showsText(el) || (el.localName === "input" ? TEXT_INPUT_TYPES.has(String(el.type).toLowerCase()) : SAMPLE_CONTROLS.has(el.localName))) {
         add("color", cs.color);
         add("font-family", cs.fontFamily);
@@ -1484,7 +1829,10 @@ export function startLayer(opts) {
     // Most frequent first; the order is fixed so the same page gives the
     // same message.
     values.sort((a, b) => b.count - a.count || (a.prop < b.prop ? -1 : a.prop > b.prop ? 1 : 0) || (a.value < b.value ? -1 : a.value > b.value ? 1 : 0));
-    return { elements, values: values.slice(0, SAMPLE.values) };
+    const out = { elements, values: values.slice(0, SAMPLE.values) };
+    const objects = objectList(found);
+    if (objects.length) out.objects = objects;
+    return out;
   }
 
   // One sample `delay` ms from now (requests close together share it), at
@@ -2389,6 +2737,9 @@ export function startLayer(opts) {
     el.setAttribute(KIND_ATTR, c.element);
     if (def.box) el.setAttribute(BOX_ATTR, "");
     if (c.component) el.setAttribute(COMPONENT_ATTR, c.component);
+    // The object style it copies: the token style sheet has a rule for it.
+    const ref = c.object ? objectRef(c.object) : "";
+    if (ref) el.setAttribute(OBJECT_ATTR, ref);
     const text = typeof c.text === "string" ? c.text : def.text;
     if (c.element === "button") el.type = "button";
     if (c.element === "input") {
@@ -2432,7 +2783,8 @@ export function startLayer(opts) {
     }
     for (const [k, el] of have) {
       const c = want.get(k);
-      if (!c || el.getAttribute(KIND_ATTR) !== c.element || (el.getAttribute(COMPONENT_ATTR) || "") !== (c.component || "")) {
+      if (!c || el.getAttribute(KIND_ATTR) !== c.element || (el.getAttribute(COMPONENT_ATTR) || "") !== (c.component || "") ||
+        (el.getAttribute(OBJECT_ATTR) || "") !== (c.object ? objectRef(c.object) : "")) {
         el.remove();
         have.delete(k);
       }
@@ -2644,6 +2996,8 @@ export function startLayer(opts) {
       c.component = m.component;
       if (m.component_file) c.component_file = m.component_file;
     }
+    const obj = checkObjectRef(m.object);
+    if (obj) c.object = obj;
     S.changes.set(c.key, c);
     renumberInserts();
     remeasure = true;

@@ -10,11 +10,17 @@
 // (--dftp-t-<id>) from the generated style sheet. The element's base rule in
 // that style sheet reads --dftp-s-<property> and has a plain fallback, so a
 // token that has gone since leaves the base look in place.
+//
+// An element can also copy one of the project's object styles (tokens.js
+// "objects": the whole look of its primary button, its cards ...). It then
+// carries the object's name (data-dftp-obj="live.button.primary"), and the
+// style sheet sets that object's values on it the same way; only the
+// properties the object has no value for come from the role tokens.
 
 import {
-  INSERT_ELEMENTS, INSERT_BOXES, INSERT_STYLE_PROPS, SCAFFOLD_KEY, isTokenRef, isComponentName, isFilePath,
+  INSERT_ELEMENTS, INSERT_BOXES, INSERT_STYLE_PROPS, SCAFFOLD_KEY, isTokenRef, isComponentName, isFilePath, OBJECT_KINDS, isVariant,
 } from "./schema.js";
-import { pxOf } from "./tokens.js";
+import { pxOf, OBJECT_PROP_LIST } from "./tokens.js";
 
 // Where the frame origin serves the style sheet made from the tokens.
 export const TOKENS_CSS = "/__dftp/tokens.css";
@@ -23,6 +29,7 @@ export const INSERT_ATTR = "data-dftp-ins";
 export const KIND_ATTR = "data-dftp-el";
 export const BOX_ATTR = "data-dftp-box";
 export const COMPONENT_ATTR = "data-dftp-component";
+export const OBJECT_ATTR = "data-dftp-obj";
 // How deep boxes may nest inside the scaffold.
 export const INSERT_DEPTH = 6;
 
@@ -43,6 +50,9 @@ export const ELEMENTS = Object.freeze({
 
 const BOX_SET = new Set(INSERT_BOXES);
 const PROP_SET = new Set(INSERT_STYLE_PROPS);
+// Every property a new element's look may carry: its token styles and the
+// values of an object style.
+const LOOK_PROP_SET = new Set([...INSERT_STYLE_PROPS, ...OBJECT_PROP_LIST]);
 
 export const isInsert = (c) => !!c && typeof c === "object" && c.kind === "insert";
 
@@ -53,9 +63,10 @@ export function tokenVar(id) {
   return `--dftp-t-${id.replace(/[._]/g, (ch) => (ch === "." ? "_d" : "_u"))}`;
 }
 
-// The custom property that carries one style of a new element.
+// The custom property that carries one style of a new element (a token
+// style, or a value of the object style it copies).
 export function styleVar(prop) {
-  return PROP_SET.has(prop) ? `--dftp-s-${prop}` : "";
+  return LOOK_PROP_SET.has(prop) ? `--dftp-s-${prop}` : "";
 }
 
 // The new elements of a change list in the order they are built: each with
@@ -98,13 +109,13 @@ export function depthUnder(list, parentKey) {
 // has none yet: the same elements (same ids, so CHANGES.md can tell they are
 // one element), without the moves, sizes and hiding made for that size.
 const SEED_KEEP = [
-  "id", "key", "kind", "element", "tag", "parent", "index", "text", "styles", "component", "component_file",
+  "id", "key", "kind", "element", "tag", "parent", "index", "text", "styles", "component", "component_file", "object",
   "text_from", "text_to", "text_attr", "text_multi", "inline", "at",
 ];
 export function seedInserts(list) {
   return (Array.isArray(list) ? list : []).filter(isInsert).map((c) => {
     const o = {};
-    for (const k of SEED_KEEP) if (c[k] !== undefined) o[k] = k === "styles" && c.styles ? { ...c.styles } : c[k];
+    for (const k of SEED_KEEP) if (c[k] !== undefined) o[k] = (k === "styles" || k === "object") && c[k] ? { ...c[k] } : c[k];
     return o;
   });
 }
@@ -323,6 +334,95 @@ export function pickStyles(doc, element) {
       break;
   }
   return out;
+}
+
+// ---------------------------------------------------------------- object styles
+
+// The object style each palette element copies, by kind and the variants
+// it prefers (a button the primary one, a heading the h2 level the palette
+// gives it ...).
+const ELEMENT_OBJECTS = Object.freeze({
+  button: Object.freeze({ kind: "button", variants: Object.freeze(["primary", "default", "secondary", "ghost"]) }),
+  heading: Object.freeze({ kind: "heading", variants: Object.freeze(["h2", "h1", "h3"]) }),
+  text: Object.freeze({ kind: "text", variants: Object.freeze(["body"]) }),
+  input: Object.freeze({ kind: "input", variants: Object.freeze(["text", "textarea", "select"]) }),
+  card: Object.freeze({ kind: "card", variants: Object.freeze(["default"]) }),
+  divider: Object.freeze({ kind: "divider", variants: Object.freeze(["default"]) }),
+});
+
+const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+
+// The properties of an object style that a dark theme changes.
+export const OBJECT_COLOR_PROPS = Object.freeze(["background", "color", "border-color"]);
+
+// Whether a tokens document gives any token a dark value: the blank page
+// then has a dark look of its own to keep.
+export function hasDarkValues(doc) {
+  return !!doc && Array.isArray(doc.tokens) && doc.tokens.some((t) => !!t && !!t.modes && !!t.modes.dark);
+}
+
+// Whether a value of an object style holds in the dark theme as well: any
+// value of a property that is not a color, or a token with a dark value. A
+// plain color (or a token with no dark value) is the light look only.
+export function darkSafe(doc, prop, v) {
+  if (!OBJECT_COLOR_PROPS.includes(prop)) return true;
+  if (typeof v !== "string" || !doc || !Array.isArray(doc.tokens)) return false;
+  const t = doc.tokens.find((x) => x && x.id === v);
+  return !!t && !!t.modes && !!t.modes.dark;
+}
+
+// The properties of an object style that differ on some screen size
+// (its `screens`): they are left to the style sheet's rules for each size.
+export function screenProps(o) {
+  const out = new Set();
+  const screens = o && o.screens && typeof o.screens === "object" ? o.screens : {};
+  for (const id of Object.keys(screens)) {
+    if (screens[id] && typeof screens[id] === "object") for (const p of Object.keys(screens[id])) out.add(p);
+  }
+  return out;
+}
+
+// The recorded object style a new element of kind `element` copies, or
+// null: one with at least one value, seen on the page before one from the
+// files, then by the element's preferred variants, then the most common.
+// doc must be a validated tokens document.
+export function objectFor(doc, element) {
+  const want = hasOwn(ELEMENT_OBJECTS, element) ? ELEMENT_OBJECTS[element] : null;
+  if (!want || !doc || typeof doc !== "object" || !Array.isArray(doc.objects)) return null;
+  const rank = (o) => {
+    const i = want.variants.indexOf(o.variant);
+    return i === -1 ? want.variants.length : i;
+  };
+  const list = doc.objects.filter((o) => o && o.kind === want.kind && OBJECT_KINDS.includes(o.kind) && isVariant(o.variant) &&
+    o.style && typeof o.style === "object" && Object.keys(o.style).length > 0);
+  list.sort((a, b) => Number(b.source === "live") - Number(a.source === "live") || rank(a) - rank(b) || b.count - a.count);
+  return list[0] || null;
+}
+
+// What a new element of kind `element` starts with: {styles, object}.
+// With an object style, its token-named properties are the element's token
+// styles and its other values come from the style sheet's rule for it;
+// only properties it has no value for take the role tokens of pickStyles.
+// Without one, the role tokens alone (object null). A token style is set
+// on the element itself, where it holds on every screen size and in both
+// themes, so these are left to the style sheet's rules instead: a property
+// whose value differs by screen size, and, when the project has a dark
+// theme, a color that holds in the light theme only (in the dark theme the
+// base look, drawn from the role tokens, takes its place).
+export function pickLook(doc, element) {
+  const roles = pickStyles(doc, element);
+  const obj = objectFor(doc, element);
+  if (!obj) return { styles: roles, object: null };
+  const dark = hasDarkValues(doc);
+  const varies = screenProps(obj);
+  const styles = {};
+  for (const p of INSERT_STYLE_PROPS) {
+    if (hasOwn(obj.style, p) || varies.has(p)) {
+      const v = obj.style[p];
+      if (isTokenRef(v) && !varies.has(p) && (!dark || darkSafe(doc, p, v))) styles[p] = v;
+    } else if (roles[p]) styles[p] = roles[p];
+  }
+  return { styles, object: { kind: obj.kind, variant: obj.variant, source: obj.source } };
 }
 
 // The project's own component for a new element, from the style scan's

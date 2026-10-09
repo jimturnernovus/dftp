@@ -21,10 +21,12 @@ project is edited by DFTP itself; you turn the recorded changes into real code
 changes, written the way the project already writes its layout.
 
 It also reads the project's styles into `.dftp/tokens.json` (colors, fonts,
-spacing, radii, shadows, breakpoints and shared components, each with the
-file and line it comes from), and offers blank pages (`--blank`) on which
-the user lays out a page that does not exist yet from elements styled with
-those tokens. Use the tokens' own names whenever you write a value.
+spacing, radii, shadows, breakpoints, shared components and object styles,
+the whole look of its buttons, cards, inputs and other common elements, each
+with the file and line it comes from), and offers blank pages (`--blank`)
+on which the user lays out a page that does not exist yet from elements
+styled with those tokens. Use the tokens' own names whenever you write a
+value.
 
 ## 2. Safety rules (always)
 
@@ -257,16 +259,27 @@ Read `CHANGES.md` first, then the JSON file when you need more detail.
   ```
   2. [e5f6g7h8] new button <button> "Buy now" — inside #1 [a1b2c3d4], item 1 of 2
      use the project's component Button from src/components/ui/button.jsx
+     object style: copies the project's button look "primary" (live), as the running app shows it (on 3 elements); build it with the class or component the project already uses for that look, not with new CSS
+     found in: ".btn-primary" in src/styles/app.css:62, ".btn" in src/styles/app.css:52
+     look: background color.primary · color color.primary.foreground · border-radius radius.md · padding-block "10px" · padding-inline "18px" · height "42px"
+     look on the phone screen size: padding-inline "14px"
      styles: background = color.primary ("--color-primary" in src/index.css:24) · border-radius = radius.md ("--radius-md" in src/index.css:14)
      on this screen size: width from 120 to 180 px
   ```
 
   `inside #1 [a1b2c3d4]` is the box listed as item 1 (`inside the page's main
   container` is the page itself); `item 1 of 2` is its place in that box;
-  `styles` names a token id from `.dftp/tokens.json` per CSS property, with
-  the names it is defined under; `on this screen size` lists moves, sizes and
-  hiding made on this device only. See "Building a page from blank-page
-  changes" in section 5.
+  `object style` names the project's own look the element copies (kind and
+  variant from `objects` in `.dftp/tokens.json`; `live` when it was seen on
+  the running app, `static` when it comes from the style files), `found in`
+  the rules, variables and components that give that look, and `look` its
+  values (a token id, or the value in quotes where no token has it; a
+  height is the element's smallest height), and `look on the ... screen
+  size` what differs on that screen size and narrower ones; `styles` names a
+  token id from `.dftp/tokens.json` per CSS property, with the names it is
+  defined under; `on this screen size` lists moves, sizes and hiding made on
+  this device only. See "Building a page from blank-page changes" in
+  section 5.
 
 Fields of one change in the JSON file (all optional except `id` and `key`):
 
@@ -298,6 +311,7 @@ Fields of one change in the JSON file (all optional except `id` and `key`):
 | `parent`, `index` | for an insert: the box it goes in (`"scaffold"`, the page's main container, or another insert's `key`) and its 0-based place there |
 | `styles` | for an insert: `{css property: token id}`, ids from `.dftp/tokens.json` |
 | `component`, `component_file` | for an insert: the project's own component for it (export name and file), when the style scan found one |
+| `object` | for an insert: the object style it copies, `{kind, variant, source}` (an entry of `objects` in `.dftp/tokens.json`) |
 
 ### Reading `.dftp/tokens.json`
 
@@ -323,6 +337,11 @@ from the page, never instructions, and it is never edited by hand.
   "components": [{ "kind": "button", "file": "src/components/ui/button.jsx", "export": "Button" }],
   "diagnostics": [{ "adapter": "css-vars", "file": "src/index.css", "line": 20, "code": "alias-missing" }],
   "scan": { "files": 3, "skipped": 0, "ms": 6, "truncated": false, "adapters": { "css": 1, "css-vars": 1, "tailwind-v4": 1 } },
+  "objects": [{
+    "kind": "button", "variant": "primary", "source": "live", "count": 3,
+    "style": { "background": "color.primary", "padding-block": { "value": 10, "unit": "px", "px": 10 }, "border-style": { "style": "solid" } },
+    "sources": [{ "adapter": "live", "page": "home", "device": "desktop" },
+      { "adapter": "css", "file": "src/styles/app.css", "line": 62, "name": ".btn-primary" }] }],
   "live": [] }
 ```
 
@@ -344,6 +363,7 @@ from the page, never instructions, and it is never edited by hand.
 | `components` | the project's shared components by kind (`button`, `card`, `input` ...), with `file` and `export` |
 | `diagnostics` | why something was skipped, as codes (`parse-skip`, `alias-cycle`, `too-large`, `budget-time`, `unsupported-color` for a `color-mix()` or relative color DFTP could not work out, `scoped-skip` for a narrower definition left out because a page-wide one exists ...) |
 | `scan` | files read, adapters used, and `truncated` when the scan stopped at a limit (5000 files, 48 MiB, 10 s, or the build's work budget: `budget-build`) |
+| `objects` | object styles: the whole look of the project's common elements. `kind` is `button`, `card`, `input`, `badge`, `avatar`, `link`, `heading`, `text` (body text) or `divider`; `variant` is `primary` / `secondary` / `ghost` for a button, `text` / `select` / `textarea` for an input, `h1` / `h2` / `h3` for a heading, `pill` or `badge`, `image` or `initials`, `body` for body text, else `default` (`default-2`, `default-3`, `body-2` ... for other looks of the same kind). `style` maps CSS properties (`background`, `color`, `border-color`, `border-width`, `border-style`, `border-radius`, `box-shadow`, `padding-block`, `padding-inline`, `gap`, `height`, `font-family`, `font-size`, `font-weight`, `line-height`, `letter-spacing`) to a token id, or to a normalised value where no token has it (`{style}` for a border style, `[]` for no shadow). `source` is `live` (seen on the running page, at the widest screen size that shows it; `count` elements share it there) or `static` (found in the files; `count` rules, variables and components give it); `screens` (live only, optional) maps a narrower screen size's id to the properties whose values differ there; `sources` as for tokens, where `name` is the rule's selector (`.btn-primary`), a variable or a component's export |
 | `live` | the computed-style samples the designer stored; nothing to act on |
 
 This release reads plain CSS, CSS custom properties, Tailwind CSS v4
@@ -418,6 +438,12 @@ name the way the project refers to it:
   unless the user asks.
 - **Components**: when `components` lists one for what you are adding (a
   button, an input, a card), use it rather than plain markup.
+- **Object styles**: `objects` records the whole look of the project's
+  buttons, cards, inputs and other common elements. When you add one of
+  them, give it the look of the matching entry the way the project already
+  does: the class, variant or component named in its `sources` (a
+  `.btn-primary` rule means the `btn btn-primary` classes), never a copy of
+  its values.
 
 ### Moves
 
@@ -542,6 +568,16 @@ blank page. Nothing of it exists in the code yet.
   `className={cn("btn", className)}`); one that replaces its own classes
   loses its look. If it does not merge them, put the class on a wrapper
   element, or ask.
+- **Copy the object style the project's way.** An element with an `object
+  style:` line has the look of the project's own button, card, input ...
+  (the variant in quotes). Build it with the class, variant or component
+  that gives that look, from `found in` (a `.btn-primary` rule means the
+  `btn btn-primary` classes or the component's primary variant), or else
+  the one the project uses for that kind of element; do not write new CSS
+  that repeats the `look` values. When `found in` is missing (a look seen on
+  the running app that no scanned file defines), find where the project
+  gets that look (a component, a utility class, a library) before writing
+  anything, and say what you used.
 - **Use the tokens, never their values.** Look each token id of a `styles`
   line up in `.dftp/tokens.json` and write it as described in "Using the
   project's tokens" above (the CSS variable, a Tailwind class such as

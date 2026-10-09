@@ -76,7 +76,7 @@ export function createFrameApp(ctx) {
         ])
         : null;
       clearTimeout(timer);
-      send(req, res, 200, tokenStylesheet(got ? got.doc : null, { theme: ctx.cfg.theme }), headers.layerAsset(TYPES.css));
+      send(req, res, 200, tokenStylesheet(got ? got.doc : null, { theme: ctx.cfg.theme, devices: ctx.cfg.devices }), headers.layerAsset(TYPES.css));
       return true;
     }
     const page = blankPages.get(target.pathname);

@@ -4,18 +4,21 @@
 // The tab shows the project's style tokens (.dftp/tokens.json, from the
 // style scan and the live samples): color swatches with their role, the type
 // scale, spacing, radii and shadows, each with its name and the file and
-// line it comes from. Rescan reads the project again and has the page
-// counted again.
+// line it comes from, and the object styles (the whole look of the
+// project's buttons, cards, text boxes ...) with a small preview of each.
+// Rescan reads the project again and has the page counted again.
 //
 // Everything is built with createElement and textContent. A document is
-// shown only after validateTokensDoc accepts it, and a swatch, a radius or a
-// shadow is drawn through the CSSOM from text that formatValue builds out
-// of those validated parts, never from a raw value.
+// shown only after validateTokensDoc accepts it, and a swatch, a radius, a
+// shadow or an object preview is drawn through the CSSOM from text that
+// formatValue / formatObjectValue build out of those validated parts, never
+// from a raw value and never from the project's markup.
 //
 // The functions above createStylesPanel are pure and run in Node too.
 
-import { validateTokensDoc, ROLES, pxOf } from "./tokens.js";
-import { formatValue } from "./css-values.js";
+import { validateTokensDoc, ROLES, pxOf, OBJECT_PROP_LIST, LIVE_VARIANTS } from "./tokens.js";
+import { formatValue, formatObjectValue } from "./css-values.js";
+import { OBJECT_KINDS, objectRef } from "./schema.js";
 
 export const MAX_ROWS = 80;
 const SAMPLE_GAP_MS = 1000;
@@ -95,6 +98,84 @@ export function summaryText(doc) {
   return parts.join(" · ");
 }
 
+// ---------------------------------------------------------------- object styles
+
+const OBJECT_NAMES = Object.freeze({
+  button: "Button", card: "Card", input: "Text box", badge: "Badge", avatar: "Avatar", link: "Link",
+  heading: "Heading", text: "Body text", divider: "Divider",
+});
+// The words a preview shows (DFTP's own, never the page's).
+const PREVIEW_TEXT = Object.freeze({ button: "Button", badge: "Badge", link: "Link", heading: "Heading", text: "Text", avatar: "A" });
+
+// The object styles of a validated document, in the order the tab lists
+// them: live records ahead of static ones, each group by kind, variant (h1
+// before h2) and count.
+export function objectRows(doc) {
+  const list = Array.isArray(doc.objects) ? doc.objects.slice() : [];
+  const variantRank = (o) => {
+    const i = LIVE_VARIANTS[o.kind].indexOf(o.variant);
+    return i === -1 ? LIVE_VARIANTS[o.kind].length : i;
+  };
+  return list.sort((a, b) => Number(b.source === "live") - Number(a.source === "live") ||
+    OBJECT_KINDS.indexOf(a.kind) - OBJECT_KINDS.indexOf(b.kind) || variantRank(a) - variantRank(b) || b.count - a.count ||
+    (a.variant < b.variant ? -1 : a.variant > b.variant ? 1 : 0));
+}
+
+// A property of an object as a value: a token id read as its token's value
+// (byId: id -> token), or the value itself.
+function objectValue(o, prop, byId) {
+  if (!Object.prototype.hasOwnProperty.call(o.style, prop)) return null;
+  const v = o.style[prop];
+  if (typeof v !== "string") return v;
+  const t = byId.get(v);
+  return t && t.value ? t.value : null;
+}
+
+const PREVIEW_CAPS = Object.freeze({
+  "border-width": [0, 3], "border-radius": [0, 999], "padding-block": [0, 6], "padding-inline": [0, 12],
+  "font-size": [9, 16], "line-height": [10, 22], "letter-spacing": [-2, 3], height: [0, 30], gap: [0, 8],
+});
+
+// The CSS a small preview of object o is drawn with: [[property, value]],
+// written from validated values only, with sizes kept small.
+export function objectPreviewCss(o, doc) {
+  const byId = new Map(doc.tokens.map((t) => [t.id, t]));
+  const out = [];
+  for (const prop of OBJECT_PROP_LIST) {
+    const v = objectValue(o, prop, byId);
+    if (v === null) continue;
+    let text = formatObjectValue(prop, v);
+    const cap = PREVIEW_CAPS[prop];
+    const px = cap && !Array.isArray(v) ? pxOf(v) : null;
+    if (cap && px !== null) text = `${Math.max(cap[0], Math.min(cap[1], px))}px`;
+    else if (cap && prop !== "line-height" && prop !== "border-radius" && v.unit !== "") continue;
+    if (text) out.push([prop, text]);
+  }
+  return out;
+}
+
+// The properties of object o as one line: "background color.primary ·
+// padding-block 10px ...".
+export function objectStyleText(o) {
+  return OBJECT_PROP_LIST.filter((p) => Object.prototype.hasOwnProperty.call(o.style, p)).map((p) => {
+    const v = o.style[p];
+    return `${p} ${typeof v === "string" ? v : formatObjectValue(p, v)}`;
+  }).join(" · ");
+}
+
+// Where an object style comes from: the first file and line (a rule or a
+// variable that gives the look), or the page it was seen on.
+export function objectSourceText(o) {
+  const file = o.sources.find((x) => x.file);
+  if (file) return `${file.file}${file.line ? `:${file.line}` : ""}${file.name ? ` ${file.name}` : ""}`;
+  const live = o.sources.find((x) => x.adapter === "live");
+  return live ? `seen on the page (${live.page}, ${live.device})` : "";
+}
+
+export function objectTitle(o) {
+  return OBJECT_NAMES[o.kind] ? `${OBJECT_NAMES[o.kind]} · ${o.variant}` : o.variant;
+}
+
 // Sends live samples to the server: one request at a time, at most one per
 // gapMs, the newest waiting sample only, and none that repeats the last one
 // sent for the same page, device and theme (a reload of an unchanged page)
@@ -133,18 +214,17 @@ export function createSampleForwarder({ post, onDoc, later, gapMs = SAMPLE_GAP_M
     force() {
       forced = true;
     },
-    // where: {page, device, theme}; sample: {elements, values}. Returns
-    // whether the sample will be sent.
+    // where: {page, device, theme}; sample: {elements, values, objects?}.
+    // Returns whether the sample will be sent.
     push(where, sample) {
       const key = `${where.page}\u0000${where.device}\u0000${where.theme}`;
-      const sig = JSON.stringify([sample.elements, sample.values]);
+      const objects = Array.isArray(sample.objects) && sample.objects.length ? sample.objects : null;
+      const sig = JSON.stringify([sample.elements, sample.values, objects || []]);
       if (!forced && sent.get(key) === sig) return false;
       forced = false;
-      pending = {
-        key,
-        sig,
-        body: { page: where.page, device: where.device, theme: where.theme, elements: sample.elements, values: sample.values },
-      };
+      const body = { page: where.page, device: where.device, theme: where.theme, elements: sample.elements, values: sample.values };
+      if (objects) body.objects = objects;
+      pending = { key, sig, body };
       pump();
       return true;
     },
@@ -346,6 +426,45 @@ export function createStylesPanel({ doc, transport, toast, requestSample, closeD
     return box;
   };
 
+  // The object styles: a preview drawn from the bundle's validated values,
+  // its kind and variant, how many elements share it, its properties and
+  // where it comes from.
+  function objectsSection(d) {
+    const list = objectRows(d);
+    const sec = h("section", "tk-sec");
+    sec.dataset.group = "objects";
+    const head = h("h3", "tk-sec-head", "Objects");
+    head.appendChild(h("span", "tk-sec-count", ` ${list.length}`));
+    sec.appendChild(head);
+    if (!list.length) {
+      sec.appendChild(h("p", "tk-empty", "None found."));
+      return sec;
+    }
+    const ul = h("ul", "tk-list");
+    for (const o of list.slice(0, MAX_ROWS)) {
+      const li = h("li", "tk-row tk-obj-row");
+      li.dataset.object = objectRef(o);
+      const stage = h("span", "tk-pre tk-obj-stage");
+      const pv = h("span", `tk-obj tk-obj-${o.kind}`, PREVIEW_TEXT[o.kind] || "");
+      for (const [prop, value] of objectPreviewCss(o, d)) css(pv, prop, value);
+      stage.appendChild(pv);
+      li.appendChild(stage);
+      const main = h("div", "tk-main");
+      const top = h("div", "tk-head");
+      top.append(h("span", "tk-name", objectTitle(o)), h("span", "tk-value", o.source === "live" ? `${o.count} on page` : "in files"));
+      main.appendChild(top);
+      const props = objectStyleText(o);
+      if (props) main.appendChild(h("div", "tk-obj-props", props));
+      const src = h("div", "tk-src", objectSourceText(o));
+      src.title = o.sources.map((x) => (x.file ? `${x.file}${x.line ? `:${x.line}` : ""}${x.name ? ` ${x.name}` : ""} (${x.adapter})` : `page ${x.page}, ${x.device} (computed styles)`)).join("\n");
+      main.appendChild(src);
+      li.appendChild(main);
+      ul.appendChild(li);
+    }
+    sec.appendChild(ul);
+    return sec;
+  }
+
   function render() {
     while (body.firstChild) body.firstChild.remove();
     const d = current;
@@ -378,6 +497,7 @@ export function createStylesPanel({ doc, transport, toast, requestSample, closeD
       cell.appendChild(css(h("span", "tk-shadow"), "box-shadow", formatValue("shadow", t.value)));
       return cell;
     }));
+    body.appendChild(objectsSection(d));
     if (g.breakpoints.length) body.appendChild(h("p", "tk-foot", `Breakpoints: ${g.breakpoints.map((b) => `${b.name} ${b.min}px`).join(" · ")}`));
     if (g.components.length) {
       body.appendChild(h("p", "tk-foot", `Shared components: ${g.components.slice(0, 20).map((c) => `${c.export} (${c.file})`).join(" · ")}`));

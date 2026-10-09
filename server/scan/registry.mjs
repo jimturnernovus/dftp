@@ -21,9 +21,10 @@
 //                when the whole value is a reference; mode: "dark" or another
 //                theme; scoped: defined in a narrower rule than the page root;
 //                path/group: segments and first segment for the token's id
-//   usages:      [{prop, raw, line, col?, selector?}]   a style property with
-//                its value; also "media-min"/"media-max" with a width, and
-//                "class" with one class name
+//   usages:      [{prop, raw, line, col?, selector?, narrow?}]   a style
+//                property with its value (narrow: inside a media query);
+//                also "media-min"/"media-max" with a width, and "class"
+//                with one class name
 //   components:  [{kind, export, line?}]
 //   diagnostics: [{code, line?}]                         codes from DIAG_CODES
 

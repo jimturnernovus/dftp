@@ -1,8 +1,9 @@
 // The element palette of blank pages, a bar above the preview: drag an
 // element from it onto the page, or click it (or press Return on it) to add
 // the element to the selected box. The layer makes the element; this window
-// picks its token styles from the style scan, names the project's own
-// component for it when the scan found one, and says where it goes.
+// picks its look from the style scan (the project's object style for it
+// first, then role tokens), names the project's own component for it when
+// the scan found one, and says where it goes.
 //
 // While an element is dragged, a cover over the preview keeps the pointer in
 // this window (the preview is another origin); the drop point is turned into
@@ -12,7 +13,7 @@
 // elements of another screen size (seed), so a page laid out on one screen
 // size can be checked and adjusted on the others.
 
-import { ELEMENTS, PALETTE, pickStyles, componentFor, seedInserts } from "./blank.js";
+import { ELEMENTS, PALETTE, pickLook, componentFor, seedInserts } from "./blank.js";
 import { validateList } from "./schema.js";
 
 const DRAG_PX = 4;
@@ -39,11 +40,14 @@ export function createPalette({ doc, win, transport, tokens, send, state, setDes
     return n;
   };
 
-  // The message for an element of kind `kind`: its token styles and, when
-  // the project has one, its component.
+  // The message for an element of kind `kind`: its token styles, the
+  // project's object style it copies and, when the project has one, its
+  // component.
   function payload(kind) {
     const scan = tokens();
-    const out = { element: kind, styles: pickStyles(scan, kind) };
+    const look = pickLook(scan, kind);
+    const out = { element: kind, styles: look.styles };
+    if (look.object) out.object = look.object;
     const comp = componentFor(scan, kind);
     if (comp) {
       out.component = comp.export;

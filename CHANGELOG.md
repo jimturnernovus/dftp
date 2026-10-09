@@ -17,6 +17,13 @@ DFTP (Designer for the Page) follows [semantic versioning](https://semver.org/).
   names.
 - **Styles** tab in the side panel: colors with roles, type scale, spacing,
   radii and shadows, each with its source file and line.
+- Object styles: the whole look of the project's buttons (primary,
+  secondary, ghost), cards, text boxes, badges, avatars, links, headings,
+  body text and dividers, from the live sample and from the style files
+  (`objects` in `tokens.json`, an **Objects** section in the Styles tab).
+  New elements on a blank page copy them first (per screen size; colors
+  without a dark value only in the light theme), and `CHANGES.md` says which
+  one an element copies so the project's own class or component is reused.
 - Blank pages (`--blank [NAME]`): an empty, responsive page styled from the
   tokens, with an element palette. New elements are listed under "New
   elements" in `CHANGES.md` (change kind `insert`) with their token styles

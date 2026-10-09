@@ -12,13 +12,17 @@
 //     components: [{ kind, file, export }],
 //     diagnostics: [{ adapter, file?, line?, code }],
 //     scan?: { files, skipped, adapters: {id: files}, truncated, ms, classes? },
+//     objects?: [ object styles, see checkObject ],
 //     live?: [ sample entries, see validateSample ] }
 //
 // validate* functions are strict and return {ok, value} with a fresh copy
 // holding only known fields, or {ok:false, error}. They are used wherever
 // this data crosses a boundary: the file on disk, an HTTP body, a message.
 
-import { isFilePath, isId, isTheme, stripControls, isTokenRef, isComponentName } from "./schema.js";
+import {
+  isFilePath, isId, isTheme, stripControls, isTokenRef, isComponentName, OBJECT_KINDS, OBJECT_SOURCES, isVariant,
+} from "./schema.js";
+import { isGradientHead } from "./css-values.js";
 
 export const TOKENS_FORMAT = "dftp.tokens";
 export const TOKENS_VERSION = 1;
@@ -82,6 +86,11 @@ export const TOKEN_LIMITS = Object.freeze({
   sampleElements: 1500,
   sampleCount: 1000000,
   count: 100000000,
+  objects: 64,
+  objectSources: 8,
+  sampleObjects: 60,
+  objectVariants: 3,
+  objectScreens: 6,
 });
 
 const ADAPTER_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
@@ -92,7 +101,8 @@ const AT_RE = /^[0-9T:.+Z-]{0,40}$/;
 const UNIT_RE = /^(?:|px|rem|em|%|vw|vh|vmin|vmax|dvh|dvw|svh|svw|lvh|lvw|ch|ex|cap|ic|lh|rlh|pt|pc|in|cm|mm|q|cqw|cqh|cqi|cqb|fr)$/;
 const FAMILY_RE = /^[\p{L}\p{N} _.&+-]{1,80}$/u;
 const STYLE_RE = /^(?:dotted|dashed|solid|double|groove|ridge|inset|outset)$/;
-// A gradient's direction, shape or position as css-values.js writes it.
+// A gradient's direction, shape or position as css-values.js writes it
+// (its CSS keywords and numbers only, see isGradientHead there).
 const HEAD_RE = /^[a-z0-9.%+ -]{1,80}$/;
 // Names and live values may hold any printable text except characters that
 // could close a quote or start markup wherever they are shown later.
@@ -226,7 +236,7 @@ export function checkValue(type, v) {
       const g = { kind, repeating: own(v, "repeating") };
       if (has(v, "head")) {
         const head = own(v, "head");
-        if (typeof head !== "string" || !HEAD_RE.test(head) || head !== head.trim()) return null;
+        if (typeof head !== "string" || !HEAD_RE.test(head) || head !== head.trim() || !isGradientHead(head)) return null;
         g.head = head;
       }
       g.stops = out;
@@ -466,12 +476,209 @@ function list(v, max, check, field) {
   return { ok: true, value: out };
 }
 
+// ---------------------------------------------------------------- object styles
+
+// The whole look of common things on the project's pages (a primary
+// button, a card, a text box ...), as a bundle of style properties. Each
+// property of a bundle holds a token id (a string) when a token has that
+// value, or else a normalised value of one of the types listed here.
+// "borderStyle" is {style}; a shadow may be [] (no shadow).
+export const OBJECT_PROPS = Object.freeze({
+  background: Object.freeze(["color", "gradient"]),
+  color: Object.freeze(["color"]),
+  "border-color": Object.freeze(["color"]),
+  "border-width": Object.freeze(["dimension"]),
+  "border-style": Object.freeze(["borderStyle"]),
+  "border-radius": Object.freeze(["radius"]),
+  "box-shadow": Object.freeze(["shadow"]),
+  "padding-block": Object.freeze(["dimension"]),
+  "padding-inline": Object.freeze(["dimension"]),
+  gap: Object.freeze(["dimension"]),
+  height: Object.freeze(["dimension"]),
+  "font-family": Object.freeze(["fontFamily"]),
+  "font-size": Object.freeze(["fontSize"]),
+  "font-weight": Object.freeze(["fontWeight"]),
+  "line-height": Object.freeze(["lineHeight"]),
+  "letter-spacing": Object.freeze(["letterSpacing"]),
+});
+export const OBJECT_PROP_LIST = Object.freeze(Object.keys(OBJECT_PROPS));
+
+const BOX_PROPS = ["background", "color", "border-color", "border-width", "border-style", "border-radius", "box-shadow"];
+const TYPE_PROPS = ["font-family", "font-size", "font-weight", "line-height", "letter-spacing"];
+// The properties a bundle of each kind may hold.
+export const OBJECT_KIND_PROPS = Object.freeze({
+  button: Object.freeze([...BOX_PROPS, "padding-block", "padding-inline", "gap", "height", ...TYPE_PROPS]),
+  card: Object.freeze([...BOX_PROPS, "padding-block", "padding-inline", "gap"]),
+  input: Object.freeze([...BOX_PROPS, "padding-block", "padding-inline", "height", ...TYPE_PROPS]),
+  badge: Object.freeze([...BOX_PROPS, "padding-block", "padding-inline", "height", ...TYPE_PROPS]),
+  avatar: Object.freeze([...BOX_PROPS, "height", "font-family", "font-size", "font-weight"]),
+  link: Object.freeze(["color", "font-family", "font-size", "font-weight"]),
+  heading: Object.freeze(["color", ...TYPE_PROPS]),
+  text: Object.freeze(["color", ...TYPE_PROPS]),
+  divider: Object.freeze(["background", "border-color", "border-width", "border-style", "height"]),
+});
+
+// The variants the page sample tells apart for each kind: a button by its
+// fill and border, a text box by its tag, a heading by its level, a badge
+// by its shape, an avatar by whether it shows a picture. Kinds with one
+// class keep up to three different looks (default, default-2, default-3).
+export const LIVE_VARIANTS = Object.freeze({
+  button: Object.freeze(["primary", "secondary", "ghost"]),
+  input: Object.freeze(["text", "select", "textarea"]),
+  heading: Object.freeze(["h1", "h2", "h3"]),
+  badge: Object.freeze(["badge", "pill"]),
+  avatar: Object.freeze(["image", "initials"]),
+  card: Object.freeze(["default"]),
+  link: Object.freeze(["default"]),
+  text: Object.freeze(["body"]),
+  divider: Object.freeze(["default"]),
+});
+
+const BORDER_STYLE_RE = /^(?:none|hidden|dotted|dashed|solid|double|groove|ridge|inset|outset)$/;
+
+// One value of an object bundle's property: a token id, or a normalised
+// value of a type that property takes. Returns a fresh copy or null.
+export function checkObjectValue(prop, v) {
+  const types = Object.prototype.hasOwnProperty.call(OBJECT_PROPS, prop) ? OBJECT_PROPS[prop] : null;
+  if (!types) return null;
+  if (typeof v === "string") return isTokenId(v) ? v : null;
+  for (const type of types) {
+    if (type === "borderStyle") {
+      if (isPlainObject(v) && typeof own(v, "style") === "string" && BORDER_STYLE_RE.test(own(v, "style"))) return { style: own(v, "style") };
+      continue;
+    }
+    if (type === "shadow" && Array.isArray(v) && v.length === 0) return [];
+    const c = checkValue(type, v);
+    if (c !== null) return c;
+  }
+  return null;
+}
+
+// A bundle's {property: value} for an object of kind `kind`: only the
+// properties that kind may hold, each value a token id from tokenIds or a
+// normalised value (checkObjectValue).
+function checkStyle(style, kind, tokenIds) {
+  if (!isPlainObject(style)) return fail("must be an object");
+  const allowed = OBJECT_KIND_PROPS[kind];
+  const out = {};
+  for (const k of Object.keys(style)) {
+    if (!allowed.includes(k)) return fail("property not allowed for this kind");
+    const v = checkObjectValue(k, style[k]);
+    if (v === null) return fail(`${k}: invalid`);
+    if (typeof v === "string" && !tokenIds.has(v)) return fail(`${k}: unknown token`);
+    out[k] = v;
+  }
+  return { ok: true, value: out };
+}
+
+// One recorded object style:
+//
+//   { kind, variant, source: "live"|"static", count, style: {property: value},
+//     sources: [token sources: live page/device, or file/line/name],
+//     screens?: {device id: {property: value}} }
+//
+// count is how many elements of the page shared it (live), or how many
+// rules and files define it (static). screens: what differs on narrower
+// screen sizes of the designer (a live look taken at several sizes), at
+// most TOKEN_LIMITS.objectScreens, none of them empty. tokenIds: the ids a
+// style may name.
+function checkObject(o, tokenIds) {
+  if (!isPlainObject(o)) return fail("must be an object");
+  const kind = own(o, "kind");
+  if (!OBJECT_KINDS.includes(kind)) return fail("kind: unknown");
+  const variant = own(o, "variant");
+  if (!isVariant(variant)) return fail("variant: invalid");
+  const source = own(o, "source");
+  if (!OBJECT_SOURCES.includes(source)) return fail("source: unknown");
+  const count = own(o, "count");
+  if (!isInt(count, 0, TOKEN_LIMITS.count)) return fail("count: invalid");
+  const st = checkStyle(own(o, "style"), kind, tokenIds);
+  if (!st.ok) return fail(`style: ${st.error}`);
+  const outStyle = st.value;
+  let outScreens = null;
+  if (has(o, "screens")) {
+    const screens = own(o, "screens");
+    if (!isPlainObject(screens)) return fail("screens: must be an object");
+    const ids = Object.keys(screens);
+    if (ids.length === 0 || ids.length > TOKEN_LIMITS.objectScreens) return fail("screens: invalid");
+    outScreens = {};
+    for (const id of ids) {
+      if (!isId(id)) return fail("screens: invalid device");
+      const r = checkStyle(own(screens, id), kind, tokenIds);
+      if (!r.ok) return fail(`screens.${id}: ${r.error}`);
+      if (Object.keys(r.value).length === 0) return fail(`screens.${id}: empty`);
+      outScreens[id] = r.value;
+    }
+  }
+  const sources = own(o, "sources");
+  if (!Array.isArray(sources) || sources.length > TOKEN_LIMITS.objectSources) return fail("sources: invalid");
+  const outSources = [];
+  for (const s of sources) {
+    const c = checkSource(s);
+    if (!c) return fail("sources: invalid entry");
+    outSources.push(c);
+  }
+  const value = { kind, variant, source, count, style: outStyle, sources: outSources };
+  if (outScreens) value.screens = outScreens;
+  return { ok: true, value };
+}
+
+function checkObjects(v, tokenIds) {
+  if (!Array.isArray(v) || v.length > TOKEN_LIMITS.objects) return fail("objects: invalid");
+  const out = [];
+  const seen = new Set();
+  for (let i = 0; i < v.length; i++) {
+    const r = checkObject(v[i], tokenIds);
+    if (!r.ok) return fail(`objects[${i}].${r.error}`);
+    const k = `${r.value.source}.${r.value.kind}.${r.value.variant}`;
+    if (seen.has(k)) return fail(`objects[${i}]: duplicate`);
+    seen.add(k);
+    out.push(r.value);
+  }
+  return { ok: true, value: out };
+}
+
+// The objects of a live sample: [{kind, variant, count, style: {property:
+// computed value}}], at most TOKEN_LIMITS.sampleObjects. variant is one of
+// LIVE_VARIANTS for the kind; values follow the same rule as the sample's
+// values. Only these fields are kept.
+function checkSampleObjects(v) {
+  if (!Array.isArray(v) || v.length > TOKEN_LIMITS.sampleObjects) return fail("objects: invalid");
+  const out = [];
+  for (let i = 0; i < v.length; i++) {
+    const o = v[i];
+    if (!isPlainObject(o)) return fail(`objects[${i}]: must be an object`);
+    const kind = own(o, "kind");
+    if (!OBJECT_KINDS.includes(kind)) return fail(`objects[${i}].kind: unknown`);
+    const variant = own(o, "variant");
+    if (!LIVE_VARIANTS[kind].includes(variant)) return fail(`objects[${i}].variant: unknown`);
+    const count = own(o, "count");
+    if (!isInt(count, 1, TOKEN_LIMITS.sampleCount)) return fail(`objects[${i}].count: invalid`);
+    const style = own(o, "style");
+    if (!isPlainObject(style)) return fail(`objects[${i}].style: must be an object`);
+    const keys = Object.keys(style);
+    if (keys.length === 0) return fail(`objects[${i}].style: empty`);
+    const outStyle = {};
+    for (const k of keys) {
+      if (!OBJECT_KIND_PROPS[kind].includes(k)) return fail(`objects[${i}].style: property not allowed for this kind`);
+      const value = style[k];
+      if (typeof value !== "string" || value.length === 0 || value.length > TOKEN_LIMITS.sampleValue || SAMPLE_BAD_RE.test(value)) {
+        return fail(`objects[${i}].style.${k}: invalid`);
+      }
+      outStyle[k] = value;
+    }
+    out.push({ kind, variant, count, style: outStyle });
+  }
+  return { ok: true, value: out };
+}
+
 // ---------------------------------------------------------------- live sample
 
 // One sample of computed styles from a page, as the designer sends it:
 //
 //   { page, device, theme: "light"|"dark", elements: 0-1500,
-//     values: [{ prop, value, count }] }       at most 400 values
+//     values: [{ prop, value, count }],        at most 400 values
+//     objects?: [{ kind, variant, count, style }] }   at most 60, see checkSampleObjects
 //
 // prop is one of SAMPLE_PROPS; value is the computed value as the browser
 // gives it (at most 200 printable characters, no < > \ ` { } ;); count is how
@@ -506,7 +713,13 @@ export function validateSample(body) {
     seen.add(k);
     out.push({ prop, value, count });
   }
-  return { ok: true, value: { page, device, theme, elements, values: out } };
+  const res = { page, device, theme, elements, values: out };
+  if (has(body, "objects")) {
+    const o = checkSampleObjects(own(body, "objects"));
+    if (!o.ok) return o;
+    if (o.value.length) res.objects = o.value;
+  }
+  return { ok: true, value: res };
 }
 
 function checkLive(entry) {
@@ -563,6 +776,11 @@ export function validateTokensDoc(doc) {
   if (has(doc, "scan")) {
     out.scan = checkScan(own(doc, "scan"));
     if (!out.scan) return fail("scan: invalid");
+  }
+  if (has(doc, "objects")) {
+    const o = checkObjects(own(doc, "objects"), ids);
+    if (!o.ok) return o;
+    out.objects = o.value;
   }
   if (has(doc, "live")) {
     const l = list(own(doc, "live"), TOKEN_LIMITS.liveSamples, checkLive, "live");
